@@ -1,0 +1,4 @@
+jdk:
+  - openjdk25
+before_install: ./gradlew --version
+install: ./gradlew clean build publishToMavenLocal -x test

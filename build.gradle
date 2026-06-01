@@ -1,0 +1,72 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'com.diffplug.spotless' version '8.6.0'
+}
+
+group = 'lol.trq'
+version = '0.2.0'
+base { archivesName = 'lol.trq.alts' }
+
+repositories { mavenCentral() }
+
+dependencies {
+    // Gson is provided by the host (vanilla Minecraft ships it) when consumed via srcDir, so it is
+    // compileOnly here to keep the standalone jar dependency-light and avoid double-bundling.
+    compileOnly 'com.google.code.gson:gson:2.11.0'
+
+    testImplementation 'com.google.code.gson:gson:2.11.0'
+    testImplementation platform('org.junit:junit-bom:5.11.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+def targetJavaVersion = 25
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
+    sourceCompatibility = JavaVersion.toVersion(targetJavaVersion)
+    targetCompatibility = JavaVersion.toVersion(targetJavaVersion)
+    withSourcesJar()
+    withJavadocJar()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.withType(Javadoc).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+spotless {
+    java {
+        // Palantir 4-space / 120-column house style.
+        palantirJavaFormat('2.91.0').style('PALANTIR')
+        target 'src/**/*.java'
+        targetExclude '**/build/**'
+    }
+}
+
+publishing {
+    publications {
+        register('mavenJava', MavenPublication) {
+            from components.java
+            pom {
+                name = 'lol.trq.alts'
+                description = 'Consumer-agnostic Minecraft alt-manager core: Microsoft/cookie/session/offline auth, ' +
+                        'encrypted local store, and skin-avatar fetch/cache. No Minecraft, no renderer — host seams via SPI.'
+                licenses {
+                    license {
+                        name = 'MIT License'
+                        url = 'https://opensource.org/licenses/MIT'
+                    }
+                }
+            }
+        }
+    }
+}
