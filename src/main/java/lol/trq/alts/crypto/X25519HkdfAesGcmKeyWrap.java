@@ -22,7 +22,13 @@ public final class X25519HkdfAesGcmKeyWrap implements KeyWrapScheme {
     /** The stable, versioned identifier for this scheme. */
     public static final String SCHEME_ID = "X25519-HKDF-SHA256-AESGCM-v1";
 
-    private static final byte[] HKDF_INFO = "lol.trq.alts/rdk-wrap/v1".getBytes(StandardCharsets.UTF_8);
+    /**
+     * The HKDF {@code info} (also bound as the wrap GCM's AAD). This is the vendor-neutral Alt Vault
+     * Protocol scheme label so the construction interoperates with any conformant implementation, not
+     * just this library.
+     */
+    private static final byte[] HKDF_INFO = "avp/rdk-wrap/v1".getBytes(StandardCharsets.UTF_8);
+
     private static final int KEK_BYTES = 32;
 
     @Override
