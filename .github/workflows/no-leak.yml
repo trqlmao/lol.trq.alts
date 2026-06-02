@@ -1,0 +1,36 @@
+name: no-leak
+
+# Fail the build if any vendor-internal name leaks into the published library.
+# lol.trq.alts is deliberately vendor-neutral. The forbidden terms are NOT stored
+# here (that would publish them); they live in the NEUTRALITY_DENYLIST repository
+# secret and are read at runtime, masked in logs.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    env:
+      DENYLIST: ${{ secrets.NEUTRALITY_DENYLIST }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Forbidden-name scan
+        run: |
+          set -e
+          if [ -z "$DENYLIST" ]; then
+            echo "::warning::NEUTRALITY_DENYLIST unavailable (e.g. a fork PR); skipping scan."
+            exit 0
+          fi
+          # Print only the offending file paths, never the matched term, so the
+          # secret's contents never appear in the (public) Actions log.
+          HITS=$(grep -rlIiE "$DENYLIST" --exclude-dir=.git --exclude-dir=build . || true)
+          if [ -n "$HITS" ]; then
+            echo "::error::forbidden internal name found in: $HITS"
+            exit 1
+          fi
+          echo "no-leak scan clean"
