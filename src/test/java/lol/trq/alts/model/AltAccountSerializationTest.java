@@ -1,6 +1,7 @@
 package lol.trq.alts.model;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -29,23 +30,25 @@ class AltAccountSerializationTest {
         assertEquals("tok", account.accessToken());
         assertEquals(AccountType.MICROSOFT, account.type());
         assertEquals(1717000000000L, account.lastUsed());
-        assertNull(account.ban(), "legacy files predate the ban field");
+        assertNull(account.bans(), "legacy files predate the bans field");
         assertNull(account.sourceClient(), "legacy files predate the sourceClient field");
         assertNull(account.sourceUser(), "legacy files predate the sourceUser field");
     }
 
     /**
-     * A payload written before provenance existed but after the ban field must still load: the missing
-     * {@code sourceClient}/{@code sourceUser} read as null, and the ban is preserved.
+     * A payload carrying a per-server {@code bans} map but no provenance must still load: the missing
+     * {@code sourceClient}/{@code sourceUser} read as null, and the bans deserialize. (Migrating the
+     * older single {@code ban} object is the store's job; see AltStoreBanMigrationTest.)
      */
     @Test
-    void parsesPreProvenanceJsonShape() {
-        String legacy =
-                "{\"uuid\":\"u\",\"username\":\"Steve\",\"accessToken\":\"tok\",\"type\":\"MICROSOFT\",\"lastUsed\":1,\"ban\":{\"banned\":true,\"observedAt\":2,\"source\":\"self\",\"detail\":\"d\",\"observedBy\":\"m\"}}";
+    void parsesBansWithoutProvenance() {
+        String json =
+                "{\"uuid\":\"u\",\"username\":\"Steve\",\"accessToken\":\"tok\",\"type\":\"MICROSOFT\",\"lastUsed\":1,\"bans\":{\"hypixel\":{\"banned\":true,\"observedAt\":2,\"source\":\"self\",\"detail\":\"d\",\"observedBy\":\"m\"}}}";
 
-        AltAccount account = gson.fromJson(legacy, AltAccount.class);
+        AltAccount account = gson.fromJson(json, AltAccount.class);
 
         assertTrue(account.banned());
+        assertTrue(account.banned("hypixel"));
         assertNull(account.sourceClient());
         assertNull(account.sourceUser());
     }
@@ -85,14 +88,34 @@ class AltAccountSerializationTest {
     }
 
     @Test
-    void banRoundTripsAndFlagsBanned() {
+    void perServerBanRoundTripsAndFlagsBanned() {
         AltAccount banned = AltAccount.of("u", "Herobrine", "t", AccountType.MICROSOFT)
-                .withBan(BanInfo.observed("self", "cheating"));
-        assertTrue(banned.banned());
+                .withBan("hypixel", BanInfo.observed("self", "cheating"));
+        assertTrue(banned.banned(), "banned on any");
+        assertTrue(banned.banned("hypixel"));
+        assertEquals(java.util.Set.of("hypixel"), banned.bannedServers());
 
         AltAccount restored = gson.fromJson(gson.toJson(banned), AltAccount.class);
         assertEquals(banned, restored);
-        assertTrue(restored.banned());
-        assertEquals("self", restored.ban().source());
+        assertTrue(restored.banned("hypixel"));
+        assertEquals("self", restored.bans().get("hypixel").source());
+    }
+
+    @Test
+    void bansAreIndependentPerServer() {
+        AltAccount alt = AltAccount.of("u", "Alex", "t", AccountType.MICROSOFT)
+                .withBan("hypixel", BanInfo.observed("self", "x"))
+                .withBan("cubecraft", BanInfo.observed("login", "y"));
+
+        assertTrue(alt.banned("hypixel"));
+        assertTrue(alt.banned("cubecraft"));
+        assertFalse(alt.banned("mineplex"), "not banned on a server with no entry");
+        assertEquals(java.util.Set.of("hypixel", "cubecraft"), alt.bannedServers());
+
+        // Clearing one server leaves the other intact.
+        AltAccount cleared = alt.withBan("hypixel", null);
+        assertFalse(cleared.banned("hypixel"));
+        assertTrue(cleared.banned("cubecraft"));
+        assertTrue(cleared.banned(), "still banned somewhere");
     }
 }

@@ -2,6 +2,9 @@ package lol.trq.alts.store;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.google.gson.annotations.SerializedName;
 import java.io.File;
 import java.nio.file.Files;
@@ -73,16 +76,19 @@ public final class AltStore {
     }
 
     /**
-     * Records a locally-observed ban for the account with {@code uuid} and persists it. Updates the
-     * stored list entry and the current account when they match; a no-op if the UUID is unknown.
+     * Records a locally-observed ban for the account with {@code uuid} on {@code serverId} and persists
+     * it. Updates the stored list entry and the current account when they match; a no-op if the UUID is
+     * unknown. Other servers' ban entries on the account are preserved.
      *
      * @param uuid the dashed UUID of the banned account
+     * @param serverId the server the ban was observed on (a host-supplied id; use a fallback such as
+     *     {@code "unknown"} when the server cannot be identified)
      * @param ban the observed ban record
      */
-    public static void markBanned(String uuid, BanInfo ban) {
-        ACCOUNTS.replaceAll(a -> a.uuid().equals(uuid) ? a.withBan(ban) : a);
+    public static void markBanned(String uuid, String serverId, BanInfo ban) {
+        ACCOUNTS.replaceAll(a -> a.uuid().equals(uuid) ? a.withBan(serverId, ban) : a);
         if (currentAccount != null && currentAccount.uuid().equals(uuid)) {
-            currentAccount = currentAccount.withBan(ban);
+            currentAccount = currentAccount.withBan(serverId, ban);
         }
         save();
     }
@@ -177,7 +183,8 @@ public final class AltStore {
             String encrypted = Files.readString(file.toPath());
             String json = EncryptionUtil.decrypt(encrypted, EncryptionUtil.getHardwareKey(keyBinding));
 
-            StorageData loaded = GSON.fromJson(json, StorageData.class);
+            JsonElement root = normalizeLegacyBans(JsonParser.parseString(json));
+            StorageData loaded = GSON.fromJson(root, StorageData.class);
 
             if (loaded != null) {
                 ACCOUNTS.clear();
@@ -196,6 +203,37 @@ public final class AltStore {
                     "AltStore not bound — call AltsRuntime.Builder.build() during host initialization");
         }
         return directoryProvider.vaultDirectory().toFile();
+    }
+
+    /**
+     * Migrates legacy stored accounts in place: an account carrying a single {@code "ban"} object (and
+     * no {@code "bans"} map) is rewritten to {@code "bans": { "unknown": <ban> }}, since bans are now
+     * per-server. Returns the same element. Package-private for unit testing.
+     *
+     * @param root the parsed storage root
+     * @return the (possibly mutated) root
+     */
+    static JsonElement normalizeLegacyBans(JsonElement root) {
+        if (root == null || !root.isJsonObject()) {
+            return root;
+        }
+        JsonElement accountsEl = root.getAsJsonObject().get("accounts");
+        if (accountsEl == null || !accountsEl.isJsonArray()) {
+            return root;
+        }
+        for (JsonElement element : accountsEl.getAsJsonArray()) {
+            if (!element.isJsonObject()) {
+                continue;
+            }
+            JsonObject account = element.getAsJsonObject();
+            if (account.has("ban") && !account.get("ban").isJsonNull() && !account.has("bans")) {
+                JsonObject bans = new JsonObject();
+                bans.add("unknown", account.get("ban"));
+                account.add("bans", bans);
+                account.remove("ban");
+            }
+        }
+        return root;
     }
 
     /**

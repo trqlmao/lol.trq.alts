@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import lol.trq.alts.crypto.VaultIdentity;
 import lol.trq.alts.crypto.X25519;
 import lol.trq.alts.crypto.X25519HkdfAesGcmKeyWrap;
@@ -103,7 +104,7 @@ class SharedVaultTest {
                 AccountType.MICROSOFT,
                 5000L,
                 "member-alice",
-                new BanInfo(true, 9000L, "self", "Watchdog", "member-bob"),
+                Map.of("hypixel", new BanInfo(true, 9000L, "self", "Watchdog", "member-bob")),
                 null,
                 null);
 
@@ -114,9 +115,10 @@ class SharedVaultTest {
         assertEquals(5000L, recovered.lastUsed()); // activity shared
         assertEquals("member-alice", recovered.lastUsedBy()); // activity attribution shared
         assertTrue(recovered.banned()); // ban status shared
-        assertEquals("Watchdog", recovered.ban().detail());
-        assertEquals(9000L, recovered.ban().observedAt());
-        assertEquals("member-bob", recovered.ban().observedBy()); // ban attribution shared
+        assertTrue(recovered.banned("hypixel")); // per-server ban shared
+        assertEquals("Watchdog", recovered.bans().get("hypixel").detail());
+        assertEquals(9000L, recovered.bans().get("hypixel").observedAt());
+        assertEquals("member-bob", recovered.bans().get("hypixel").observedBy()); // ban attribution shared
     }
 
     @Test

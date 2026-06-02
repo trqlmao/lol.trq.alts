@@ -1,15 +1,24 @@
 package lol.trq.alts.model;
 
 import com.google.gson.annotations.SerializedName;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * An immutable Minecraft account stored locally within a client. Holds the credentials and metadata
  * required to reconstruct a game session. Persisted via Gson; every component carries a
  * {@link SerializedName} so serialization survives obfuscation.
  *
- * <p>When this account lives in a shared repository, {@code lastUsed}/{@code lastUsedBy} and {@code ban}
- * are shared state so members coordinate (who used it last, who got it banned). For a purely local
+ * <p>When this account lives in a shared repository, {@code lastUsed}/{@code lastUsedBy} and {@code bans}
+ * are shared state so members coordinate (who used it last, where it got banned). For a purely local
  * account the attribution fields are {@code null}.
+ *
+ * <p>{@code bans} maps a {@code serverId} to a {@link BanInfo} — bans are per-server, because an account
+ * banned on one server may be fine on another. The {@code serverId} is an opaque, host-supplied string
+ * (the same namespace a host uses for game stats); the library never inspects a connection or detects a
+ * server. A {@code null}/empty map means "not known to be banned anywhere".
  *
  * <p>{@code sourceClient}/{@code sourceUser} record provenance for cross-client sharing: which client
  * (mod) the alt was added from and the user within that client, so members of a shared repo can tell a
@@ -25,7 +34,7 @@ import com.google.gson.annotations.SerializedName;
  * @param lastUsed the epoch-millis timestamp of the last successful login with this account
  * @param lastUsedBy the member id (Ed25519 identity) that last used this account in a shared repo, or
  *     {@code null} when used locally / unattributed
- * @param ban a locally-observed ban record, or {@code null} if the account is not known to be banned
+ * @param bans locally-observed ban records keyed by server id, or {@code null} if never observed banned
  * @param sourceClient the client (mod) the alt was added from, or {@code null} when unattributed
  * @param sourceUser the user within {@code sourceClient} that added the alt, or {@code null}
  * @author trq
@@ -38,7 +47,7 @@ public record AltAccount(
         @SerializedName("type") AccountType type,
         @SerializedName("lastUsed") long lastUsed,
         @SerializedName("lastUsedBy") String lastUsedBy,
-        @SerializedName("ban") BanInfo ban,
+        @SerializedName("bans") Map<String, BanInfo> bans,
         @SerializedName("sourceClient") String sourceClient,
         @SerializedName("sourceUser") String sourceUser) {
 
@@ -69,7 +78,7 @@ public record AltAccount(
                 type,
                 System.currentTimeMillis(),
                 lastUsedBy,
-                ban,
+                bans,
                 sourceClient,
                 sourceUser);
     }
@@ -83,17 +92,34 @@ public record AltAccount(
      */
     public AltAccount usedNow(String byMember) {
         return new AltAccount(
-                uuid, username, accessToken, type, System.currentTimeMillis(), byMember, ban, sourceClient, sourceUser);
+                uuid,
+                username,
+                accessToken,
+                type,
+                System.currentTimeMillis(),
+                byMember,
+                bans,
+                sourceClient,
+                sourceUser);
     }
 
     /**
-     * Returns a copy of this account carrying the given ban record.
+     * Returns a copy of this account with the ban record for {@code serverId} set (or cleared). Other
+     * servers' entries are preserved.
      *
-     * @param ban the ban record, or {@code null} to clear
-     * @return a copy with {@code ban} replaced
+     * @param serverId the server the ban applies to
+     * @param ban the ban record, or {@code null} to clear this server's entry
+     * @return a copy with {@code serverId}'s ban entry replaced
      */
-    public AltAccount withBan(BanInfo ban) {
-        return new AltAccount(uuid, username, accessToken, type, lastUsed, lastUsedBy, ban, sourceClient, sourceUser);
+    public AltAccount withBan(String serverId, BanInfo ban) {
+        Map<String, BanInfo> updated = bans == null ? new LinkedHashMap<>() : new LinkedHashMap<>(bans);
+        if (ban == null) {
+            updated.remove(serverId);
+        } else {
+            updated.put(serverId, ban);
+        }
+        return new AltAccount(
+                uuid, username, accessToken, type, lastUsed, lastUsedBy, updated, sourceClient, sourceUser);
     }
 
     /**
@@ -105,15 +131,41 @@ public record AltAccount(
      * @return a copy carrying the given provenance
      */
     public AltAccount withSource(String sourceClient, String sourceUser) {
-        return new AltAccount(uuid, username, accessToken, type, lastUsed, lastUsedBy, ban, sourceClient, sourceUser);
+        return new AltAccount(uuid, username, accessToken, type, lastUsed, lastUsedBy, bans, sourceClient, sourceUser);
     }
 
     /**
-     * Returns whether this account is currently considered banned.
+     * Returns whether this account is considered banned on the given server.
      *
-     * @return {@code true} if a ban record is present and flags the account banned
+     * @param serverId the server to check
+     * @return {@code true} if a ban record for {@code serverId} is present and flags the account banned
+     */
+    public boolean banned(String serverId) {
+        BanInfo ban = bans == null ? null : bans.get(serverId);
+        return ban != null && ban.banned();
+    }
+
+    /**
+     * Returns whether this account is considered banned on any server.
+     *
+     * @return {@code true} if any server's ban record flags the account banned
      */
     public boolean banned() {
-        return ban != null && ban.banned();
+        return bans != null && bans.values().stream().anyMatch(b -> b != null && b.banned());
+    }
+
+    /**
+     * Returns the set of server ids on which this account is considered banned.
+     *
+     * @return an unmodifiable set of banned server ids (empty if none)
+     */
+    public Set<String> bannedServers() {
+        if (bans == null) {
+            return Set.of();
+        }
+        return bans.entrySet().stream()
+                .filter(e -> e.getValue() != null && e.getValue().banned())
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toUnmodifiableSet());
     }
 }

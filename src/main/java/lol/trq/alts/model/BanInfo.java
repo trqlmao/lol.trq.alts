@@ -3,10 +3,11 @@ package lol.trq.alts.model;
 import com.google.gson.annotations.SerializedName;
 
 /**
- * A locally-observed ban record for an account. Hypixel exposes no ban-status API, so this is not a
- * lookup — it is set when the client <em>witnesses</em> a ban: the player gets banned while on this
- * account, or logs into an account already flagged. Persisted on the {@link AltAccount} so the row
- * can show a badge, and shared into a repository so members see which alts are burned.
+ * A locally-observed ban record for an account on one server. Servers expose no ban-status API, so this
+ * is not a lookup — it is set when the client <em>witnesses</em> a ban: the player gets banned while on
+ * this account, or logs into an account already flagged. Stored per server in {@link AltAccount}'s
+ * {@code bans} map (keyed by server id), so the row can show which servers burned it, and shared into a
+ * repository so members coordinate.
  *
  * @param banned whether the account is currently considered banned
  * @param observedAt the epoch-millis the ban was observed
