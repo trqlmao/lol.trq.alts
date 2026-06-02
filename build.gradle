@@ -13,9 +13,9 @@ repositories { mavenCentral() }
 dependencies {
     // Gson is provided by the host (vanilla Minecraft ships it) when consumed via srcDir, so it is
     // compileOnly here to keep the standalone jar dependency-light and avoid double-bundling.
-    compileOnly 'com.google.code.gson:gson:2.11.0'
+    compileOnly 'com.google.code.gson:gson:2.14.0'
 
-    testImplementation 'com.google.code.gson:gson:2.11.0'
+    testImplementation 'com.google.code.gson:gson:2.14.0'
     testImplementation platform('org.junit:junit-bom:6.1.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
@@ -30,7 +30,7 @@ sourceSets {
 
 dependencies {
     examplesImplementation sourceSets.main.output
-    examplesCompileOnly 'com.google.code.gson:gson:2.11.0'
+    examplesCompileOnly 'com.google.code.gson:gson:2.14.0'
 }
 
 tasks.named('check') {
