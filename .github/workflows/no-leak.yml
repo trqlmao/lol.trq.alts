@@ -1,0 +1,30 @@
+name: no-leak
+
+# Fail the build if any vendor-internal name leaks into the published library.
+# lol.trq.alts is deliberately vendor-neutral: it must never name a specific
+# client, product, sponsor, server deployment, or internal host.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Forbidden-name scan
+        run: |
+          set -e
+          # This workflow file is the only thing excluded (so the denylist
+          # definition below does not match itself); every other file is scanned.
+          # .git and the Gradle build/ output are skipped, and binary files (-I).
+          PATTERN='opal|terminus|fernan|vane\.moe|cps\.sh|\bcps\b|\btomb\b|54fd49e4-2103-4044'
+          if grep -rnIiE "$PATTERN" --exclude-dir=.git --exclude-dir=build --exclude=no-leak.yml . ; then
+            echo "::error::forbidden internal name found in published source"
+            exit 1
+          fi
+          echo "no-leak scan clean"
