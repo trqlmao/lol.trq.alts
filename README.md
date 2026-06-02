@@ -6,7 +6,7 @@
 
 > Drop-in Minecraft account-manager core for Fabric mods: auth, encrypted local storage, and async player data, all host-agnostic.
 
-**lol.trq.alts** is a standalone, renderer-agnostic account-management library for Minecraft Fabric mods. It provides Microsoft, cookie, session, and offline login, an encrypted on-disk account store, async player-head and Hypixel-stats caches, and a clean set of host seams, with no Minecraft or renderer types of its own.
+**lol.trq.alts** is a standalone, renderer-agnostic account-management library for Minecraft Fabric mods. It provides Microsoft, cookie, session, and offline login, an encrypted on-disk account store, async player-head and per-server game-stats caches, and a clean set of host seams, with no Minecraft or renderer types of its own.
 
 ## Features
 
@@ -14,7 +14,7 @@
 - **Encrypted local store.** Accounts are persisted with AES-256-GCM and PBKDF2 in a host-chosen directory; the file never holds plaintext credentials at rest.
 - **Zero-knowledge shared vault.** Share an alt repository between members with end-to-end encryption (Ed25519 identities, X25519-wrapped per-repo keys, AES-256-GCM payloads). The sync server stores only ciphertext, wrapped keys, public keys, and counters, so it can decrypt nothing.
 - **Federated.** Repositories are addressed `avp://host/repoId` and reachable across independently hosted servers using one portable identity, so different clients can share alts without a central server. The wire contract is the open [Alt Vault Protocol](https://github.com/trqlmao/avp-spec).
-- **Async caches.** A small `AsyncCache<K,V>` primitive (lazy, non-blocking, stale-while-revalidate) powers player-head avatars and optional Hypixel BedWars/SkyWars stats.
+- **Async caches.** A small `AsyncCache<K,V>` primitive (lazy, non-blocking, stale-while-revalidate) powers player-head avatars and optional, server-agnostic game stats. A host registers a `GameStatsSource` per server and the card renders whatever stat chips it returns; the library never interprets them.
 - **Host-agnostic.** The library never imports your mod. You provide a handful of backend seams (session injection, storage directory, texture upload, main-thread executor, toasts, stats source) and wire it once.
 - **Obfuscation-safe.** DTOs are records with a `@SerializedName` on every component, so (de)serialization survives shrinking and obfuscation.
 
@@ -60,7 +60,7 @@ AltsRuntime<MyHandle> alts = new AltsRuntime.Builder<MyHandle>()
         .textureUploader(new MyUploader())           // upload avatar bytes -> host texture
         .mainThread(myExecutor::execute)             // marshal onto the render thread
         .toastSink(new MyToastSink())                // surface login notifications
-        .hypixelStatsSource(new MyHypixelSource())   // optional: BedWars/SkyWars stats
+        .gameStatsSource(new MyServerStatsSource())  // optional: per-server stat chips (one per server)
         .microsoftAuth(MicrosoftAuthConfig.of(MY_AZURE_CLIENT_ID))  // your own Azure app id
         .build();
 
@@ -122,4 +122,4 @@ complies with any service's terms or with applicable law, is the consumer's resp
 
 ## Activity
 
-![Repobeats analytics image](https://repobeats.axiom.co/api/embed/8fbbf889a0dea0c16bb24d8a5dca479a4dd1bee1.svg "Repobeats analytics image")
+![Repobeats analytics image](https://repobeats.axiom.co/api/embed/160f59cd4e1a963270464593e999684fe379c368.svg "Repobeats analytics image")

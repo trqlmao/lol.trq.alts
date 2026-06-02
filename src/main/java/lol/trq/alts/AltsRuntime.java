@@ -1,13 +1,15 @@
 package lol.trq.alts;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 import lol.trq.alts.auth.AltLoginService;
 import lol.trq.alts.auth.AltLoginServiceImpl;
 import lol.trq.alts.auth.MicrosoftAuthConfig;
 import lol.trq.alts.cache.AsyncCache;
-import lol.trq.alts.model.HypixelStats;
+import lol.trq.alts.model.GameStats;
 import lol.trq.alts.skin.SkinAvatarCache;
-import lol.trq.alts.spi.HypixelStatsSource;
+import lol.trq.alts.spi.GameStatsSource;
 import lol.trq.alts.spi.MainThreadExecutor;
 import lol.trq.alts.spi.SessionInjector;
 import lol.trq.alts.spi.TextureUploader;
@@ -31,12 +33,13 @@ import lol.trq.alts.store.SecretStore;
  */
 public final class AltsRuntime<H> {
 
-    /** How long a fetched Hypixel stats snapshot stays fresh before a background refresh. */
+    /** How long a fetched game-stats snapshot stays fresh before a background refresh. */
     private static final long STATS_TTL_MILLIS = 5 * 60 * 1000L;
 
     private final AltLoginService loginService;
     private final SkinAvatarCache<H> skinCache;
-    private final AsyncCache<String, HypixelStats> hypixelStats;
+    private final Map<String, AsyncCache<String, GameStats>> gameStatsCaches;
+    private final AsyncCache<String, GameStats> emptyStatsCache;
     private final ToastSink toasts;
 
     private AltsRuntime(Builder<H> builder) {
@@ -55,21 +58,26 @@ public final class AltsRuntime<H> {
         this.loginService = new AltLoginServiceImpl(builder.sessionInjector, builder.microsoftAuth);
         this.skinCache = new SkinAvatarCache<>(builder.textureUploader, builder.mainThread);
 
-        // Hypixel stats are optional: with no source the loader yields null, so the cache simply
-        // always misses and get() returns null — callers degrade gracefully.
-        final HypixelStatsSource statsSource = builder.hypixelStatsSource;
-        this.hypixelStats = new AsyncCache<>(
-                uuid -> {
-                    if (statsSource == null) {
-                        return null;
-                    }
-                    try {
-                        return statsSource.fetch(uuid);
-                    } catch (Exception e) {
-                        return null;
-                    }
-                },
-                STATS_TTL_MILLIS);
+        // Game stats are optional and per-server: one cache per registered source. A request for a
+        // server with no source returns the shared empty cache, whose loader always yields null, so
+        // callers degrade gracefully.
+        Map<String, AsyncCache<String, GameStats>> caches = new LinkedHashMap<>();
+        for (Map.Entry<String, GameStatsSource> entry : builder.gameStatsSources.entrySet()) {
+            GameStatsSource source = entry.getValue();
+            caches.put(
+                    entry.getKey(),
+                    new AsyncCache<>(
+                            uuid -> {
+                                try {
+                                    return source.fetch(uuid);
+                                } catch (Exception e) {
+                                    return null;
+                                }
+                            },
+                            STATS_TTL_MILLIS));
+        }
+        this.gameStatsCaches = Map.copyOf(caches);
+        this.emptyStatsCache = new AsyncCache<>(uuid -> null, STATS_TTL_MILLIS);
     }
 
     /**
@@ -91,13 +99,17 @@ public final class AltsRuntime<H> {
     }
 
     /**
-     * Returns the lazy, cached Hypixel-stats lookup keyed by player UUID. A missing source or a failed
-     * fetch surfaces as {@code null} from {@link AsyncCache#get(Object)}, so callers degrade cleanly.
+     * Returns the lazy, cached game-stats lookup for one server, keyed by player UUID. If no source was
+     * registered for {@code serverId}, returns an empty cache that always yields {@code null}; a failed
+     * fetch likewise surfaces as {@code null} from {@link AsyncCache#get(Object)}, so callers degrade
+     * cleanly.
      *
-     * @return the Hypixel stats cache
+     * @param serverId the server whose stats to look up (matches a registered source's id)
+     * @return the per-server game-stats cache
      */
-    public AsyncCache<String, HypixelStats> hypixelStats() {
-        return hypixelStats;
+    public AsyncCache<String, GameStats> gameStats(String serverId) {
+        AsyncCache<String, GameStats> cache = gameStatsCaches.get(serverId);
+        return cache != null ? cache : emptyStatsCache;
     }
 
     /**
@@ -124,7 +136,7 @@ public final class AltsRuntime<H> {
         private TextureUploader<H> textureUploader;
         private MainThreadExecutor mainThread;
         private ToastSink toastSink;
-        private HypixelStatsSource hypixelStatsSource;
+        private final Map<String, GameStatsSource> gameStatsSources = new LinkedHashMap<>();
         private MicrosoftAuthConfig microsoftAuth;
         private String storeFileName;
         private String storeKeyBinding;
@@ -190,13 +202,20 @@ public final class AltsRuntime<H> {
         }
 
         /**
-         * Sets the Hypixel stats source (optional; without it the stats cache always returns null).
+         * Registers a game-stats source for one server (optional; callable once per server). Without any
+         * source, {@link AltsRuntime#gameStats(String)} always returns null. The source's
+         * {@link GameStatsSource#serverId()} is the key consumers pass to {@code gameStats(serverId)}.
          *
-         * @param value the host Hypixel stats source
+         * @param value the host game-stats source
          * @return this builder
+         * @throws IllegalStateException if a source for the same server id was already registered
          */
-        public Builder<H> hypixelStatsSource(HypixelStatsSource value) {
-            this.hypixelStatsSource = value;
+        public Builder<H> gameStatsSource(GameStatsSource value) {
+            Objects.requireNonNull(value, "gameStatsSource");
+            String serverId = Objects.requireNonNull(value.serverId(), "serverId");
+            if (gameStatsSources.putIfAbsent(serverId, value) != null) {
+                throw new IllegalStateException("duplicate game-stats serverId: " + serverId);
+            }
             return this;
         }
 

@@ -1,6 +1,6 @@
 # lol.trq.alts
 
-> A consumer-agnostic Minecraft account-manager core for Fabric mods: Microsoft, cookie, session, and offline login; an encrypted local account store; async player-head and Hypixel-stats caches; a zero-knowledge shared alt vault; and a clean set of host SPI seams. Pure JDK plus Gson, with no Minecraft or renderer types of its own.
+> A consumer-agnostic Minecraft account-manager core for Fabric mods: Microsoft, cookie, session, and offline login; an encrypted local account store; async player-head and server-agnostic game-stats caches; a zero-knowledge shared alt vault; and a clean set of host SPI seams. Pure JDK plus Gson, with no Minecraft or renderer types of its own.
 
 The library is host-agnostic. A consuming mod supplies a handful of backend seams (session injection, storage directory, texture upload, main-thread executor, toasts, an optional stats source, and an optional Microsoft auth config) and wires one `AltsRuntime`. Microsoft login takes the host's own Azure client id; the library ships no default. The shared vault implements the Alt Vault Protocol (AVP), so repositories can be shared across clients.
 

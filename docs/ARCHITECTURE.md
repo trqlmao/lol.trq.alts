@@ -16,7 +16,7 @@
             │ store/  AltStore (encrypted file) + EncryptionUtil
             │ cache/  AsyncCache<K,V>
             │ skin/   SkinAvatarCache<H>
-            │ model/  AltAccount, HypixelStats, BanInfo, …
+            │ model/  AltAccount, GameStats, BanInfo, …
             │ crypto/ VaultIdentity, PayloadCipher, KeyWrapScheme, …
             │ vault/  SharedVault + transport/ DTOs + federation/ addressing
             └──────────────────────────────────────────────┘
@@ -32,7 +32,7 @@
 
 - **`store/`** — `AltStore` is a static façade over an encrypted on-disk file. `EncryptionUtil` does AES-256-GCM with a PBKDF2-derived, machine-bound key. The filename and the key-binding constant are host-configurable so different hosts (and migrations from earlier layouts) don't collide.
 
-- **`cache/AsyncCache<K,V>`** — the reusable async-lookup primitive. `get(key)` never blocks: it returns the cached value or `null`, firing a background fetch on a miss. Entry states (pending / failed / value) are encoded as sentinels because `ConcurrentHashMap` forbids nulls. A positive TTL makes it stale-while-revalidate. Both `SkinAvatarCache` and the Hypixel-stats cache are built on this.
+- **`cache/AsyncCache<K,V>`** — the reusable async-lookup primitive. `get(key)` never blocks: it returns the cached value or `null`, firing a background fetch on a miss. Entry states (pending / failed / value) are encoded as sentinels because `ConcurrentHashMap` forbids nulls. A positive TTL makes it stale-while-revalidate. Both `SkinAvatarCache` and the per-server game-stats caches are built on this; `AltsRuntime.gameStats(serverId)` returns one cache per registered `GameStatsSource`.
 
 - **`crypto/` + `vault/SharedVault`** — the zero-knowledge shared-repository layer. A member is an Ed25519 identity (their stable id) paired with an X25519 key. `SharedVault` does pure client-side crypto over plain DTOs: it generates a per-repo data key, wraps it to each member's X25519 key (`KeyWrapScheme`), and encrypts the `AltAccount` payload under AES-256-GCM with the repo id / version / epoch bound into the AAD so stale or spliced ciphertext fails to authenticate. It never touches the network, which keeps the zero-knowledge guarantee provable: the server only ever sees what these methods emit (ciphertext, wrapped keys, public keys, counters).
 
@@ -52,4 +52,4 @@ Shared repositories are federated by **portable identity + addressing**, not ser
 
 - No Minecraft / renderer / consumer-mod imports anywhere in the library — only JDK and Gson.
 - DTOs are records with `@SerializedName` on every component, so (de)serialization survives obfuscation.
-- Optional capabilities (avatars, Hypixel stats) degrade to `null` when their seam is absent, so hosts can opt in incrementally.
+- Optional capabilities (avatars, game stats) degrade to `null` when their seam is absent, so hosts can opt in incrementally.

@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'lol.trq'
-version = '0.2.0'
+version = '0.3.0'
 base { archivesName = 'lol.trq.alts' }
 
 repositories { mavenCentral() }
@@ -19,6 +19,22 @@ dependencies {
     testImplementation platform('org.junit:junit-bom:5.11.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// Examples are compiled (but never published) so they cannot drift from the library API.
+sourceSets {
+    examples {
+        java.srcDirs = ['examples']
+    }
+}
+
+dependencies {
+    examplesImplementation sourceSets.main.output
+    examplesCompileOnly 'com.google.code.gson:gson:2.11.0'
+}
+
+tasks.named('check') {
+    dependsOn 'compileExamplesJava'
 }
 
 def targetJavaVersion = 25
