@@ -1,0 +1,10 @@
+{
+  "description": "Canonical key-binding message (SPEC §9): bindingMessage = utf8(ed25519PublicKey + '|' + x25519PublicKey). The keys here are illustrative base64 public-key strings; this vector exercises message construction (string concatenation), which is independent of key validity. 'expectedMessageUtf8' is the exact string whose UTF-8 bytes are signed.",
+  "cases": [
+    {
+      "ed25519PublicKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "x25519PublicKey": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+      "expectedMessageUtf8": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=|AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
+    }
+  ]
+}

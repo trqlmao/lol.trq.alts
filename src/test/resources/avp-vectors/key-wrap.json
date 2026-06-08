@@ -1,0 +1,21 @@
+{
+  "description": "Default wrap scheme X25519-HKDF-SHA256-AESGCM-v1 (SPEC §4). The repo data key is wrapped to a recipient's X25519 public key: sharedSecret = X25519(ephemeralPriv, recipientPub); KEK = HKDF-SHA256(ikm=sharedSecret, salt=ephemeralPubRaw(32B), info=UTF8(\"avp/rdk-wrap/v1\"), L=32); wrappedCiphertext = AES-256-GCM(KEK, iv, aad=UTF8(\"avp/rdk-wrap/v1\"), plaintext=dataKey(32B)) with the 16-byte tag appended. The WrappedKey on the wire is {schemeId, ephemeralPublicKey, iv, ciphertext}. To make this deterministic and reproducible, the recipient and the ephemeral keypair are the RFC 7748 §6.1 Alice and Bob keypairs respectively, so 'sharedSecretHex' equals the published RFC 7748 §6.1 shared secret 4a5d9d5b... (see x25519.json case rfc7748-dh). 'recipientPrivateKeyB64' (NOT part of the wire format, included only so a checker can unwrap) is the raw 32-byte recipient scalar. The runner: (a) recomputes sharedSecret/KEK and re-encrypts the data key, asserting equality with wrappedKey.ciphertext; (b) unwraps with recipientPrivateKey and asserts recovery of the data key. Generated, cross-verified against the reference implementation (lol.trq.alts X25519HkdfAesGcmKeyWrap.unwrap recovers the data key from this WrappedKey).",
+  "cases": [
+    {
+      "name": "key-wrap-1",
+      "source": "generated, cross-verified against the reference implementation; keys are RFC 7748 §6.1 Alice (recipient) and Bob (ephemeral)",
+      "recipientPrivateKeyB64": "dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo=",
+      "recipientPublicKeyB64": "hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=",
+      "dataKeyB64": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
+      "sharedSecretHex": "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742",
+      "kekHex": "dff722e5c28f7477f80c1d46f5583940a2c53e396342a18495399ba4ed9c6321",
+      "info": "avp/rdk-wrap/v1",
+      "wrappedKey": {
+        "schemeId": "X25519-HKDF-SHA256-AESGCM-v1",
+        "ephemeralPublicKey": "3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08=",
+        "iv": "qrvM3e7/ABEiM0RV",
+        "ciphertext": "PM93je2VfKwFXs8G6RCrrcRGjIr6C/+a4cz16NxRnZbTMbXNxyvWDPXbU4Xj+dH7"
+      }
+    }
+  ]
+}

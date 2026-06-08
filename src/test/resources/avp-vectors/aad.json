@@ -1,0 +1,17 @@
+{
+  "description": "Additional authenticated data (SPEC §4): AAD = UTF8(repoId) || 0x1F || int64BE(payloadVersion) || int64BE(keyEpoch). 'expectedAadHex' is the AAD bytes as lowercase hex.",
+  "cases": [
+    {
+      "repoId": "repo-1",
+      "payloadVersion": 1,
+      "keyEpoch": 0,
+      "expectedAadHex": "7265706f2d311f00000000000000010000000000000000"
+    },
+    {
+      "repoId": "r",
+      "payloadVersion": 2,
+      "keyEpoch": 5,
+      "expectedAadHex": "721f00000000000000020000000000000005"
+    }
+  ]
+}
