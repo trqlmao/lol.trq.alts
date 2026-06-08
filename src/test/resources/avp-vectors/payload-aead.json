@@ -1,0 +1,18 @@
+{
+  "description": "AES-256-GCM payload encryption with the AVP AAD (SPEC §4): 12-byte IV, 128-bit tag APPENDED to the ciphertext, AAD = UTF8(repoId) || 0x1F || int64BE(payloadVersion) || int64BE(keyEpoch). 'keyB64' is the 32-byte data key, 'ivB64' the 12-byte IV, 'ciphertextB64' the GCM output with the 16-byte tag appended (all standard base64). 'aadHex' is the computed AAD for cross-reference with aad.json. The runner: (a) re-encrypts the plaintext under the key/iv/aad and asserts it equals ciphertextB64; (b) decrypts ciphertextB64 and asserts it recovers the plaintext; (c) asserts decryption FAILS when the epoch in the AAD is changed (replay protection). Generated, cross-verified against the reference implementation (lol.trq.alts PayloadCipher decrypts it with the same AAD and recovers the plaintext).",
+  "cases": [
+    {
+      "name": "payload-aead-1",
+      "source": "generated, cross-verified against the reference implementation",
+      "keyB64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "ivB64": "CgsMDQ4PAAECAwQF",
+      "repoId": "repo-aead-1",
+      "payloadVersion": 7,
+      "keyEpoch": 2,
+      "aadHex": "7265706f2d616561642d311f00000000000000070000000000000002",
+      "plaintextUtf8": "{\"alts\":[],\"payloadVersion\":7}",
+      "ciphertextB64": "1FyqKaTft8CoC/t3T5pbS4qy5UjvxYcTc31QKQRdgVyfadaPbG0QT6IQ3KgVsA==",
+      "tamperEpoch": 3
+    }
+  ]
+}

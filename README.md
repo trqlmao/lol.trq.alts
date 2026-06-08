@@ -13,7 +13,7 @@
 - **Four login methods.** Microsoft OAuth 2.0, browser-cookie, session-token, and offline, all `CompletableFuture`-based behind a single `AltLoginService`. You supply your own Azure app client id for Microsoft login (`MicrosoftAuthConfig`); the library ships no shared default.
 - **Encrypted local store.** Accounts are persisted with AES-256-GCM and PBKDF2 in a host-chosen directory; the file never holds plaintext credentials at rest.
 - **Zero-knowledge shared vault.** Share an alt repository between members with end-to-end encryption (Ed25519 identities, X25519-wrapped per-repo keys, AES-256-GCM payloads). The sync server stores only ciphertext, wrapped keys, public keys, and counters, so it can decrypt nothing.
-- **Federated.** Repositories are addressed `avp://host/repoId` and reachable across independently hosted servers using one portable identity, so different clients can share alts without a central server. The wire contract is the open [Alt Vault Protocol](https://github.com/trqlmao/avp-spec).
+- **Federated.** Repositories are addressed `avp://host/repoId` and reachable across independently hosted servers using one portable identity, so different clients can share alts without a central server. The wire contract is the open [Alt Vault Protocol](https://github.com/trqlmao/avp).
 - **Async caches.** A small `AsyncCache<K,V>` primitive (lazy, non-blocking, stale-while-revalidate) powers player-head avatars and optional, server-agnostic game stats. A host registers a `GameStatsSource` per server and the card renders whatever stat chips it returns; the library never interprets them.
 - **Host-agnostic.** The library never imports your mod. You provide a handful of backend seams (session injection, storage directory, texture upload, main-thread executor, toasts, stats source) and wire it once.
 - **Obfuscation-safe.** DTOs are records with a `@SerializedName` on every component, so (de)serialization survives shrinking and obfuscation.
@@ -88,7 +88,7 @@ structured index of the docs in the [llmstxt.org](https://llmstxt.org) format, t
 5. **House style.** palantir-java-format (4-space, 120 column), full Javadoc on public and protected
    members. Run `./gradlew spotlessApply` before committing, and `./gradlew build` (JDK 25) to test.
 
-The shared vault implements the [Alt Vault Protocol](https://github.com/trqlmao/avp-spec); consult that
+The shared vault implements the [Alt Vault Protocol](https://github.com/trqlmao/avp); consult that
 spec for the wire contract and the fixed byte constructions (AAD, key binding).
 
 ## Building

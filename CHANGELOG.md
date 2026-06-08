@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- AVP conformance-vector tests (`AvpConformanceVectorsTest`). The crypto primitives and envelope
+  compositions are now gated byte for byte against the published Alt Vault Protocol vectors, vendored under
+  `src/test/resources/avp-vectors/` from `trqlmao/avp`: HKDF, X25519, Ed25519, the AAD and
+  key-binding-message constructions, the payload AEAD, the key wrap, and the MUST-reject negative bank. The
+  round-trip tests proved self-consistency; these prove interoperability with every other AVP
+  implementation, so a silent change to a construction is caught.
+
+### Fixed
+
+- Corrected the Alt Vault Protocol spec link in the README (`trqlmao/avp-spec` to `trqlmao/avp`).
+
 ## [0.5.0] - 2026-06-01
 
 ### Changed
