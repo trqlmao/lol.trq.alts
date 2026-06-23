@@ -15,6 +15,7 @@ import lol.trq.alts.spi.SessionInjector;
 import lol.trq.alts.spi.TextureUploader;
 import lol.trq.alts.spi.ToastSink;
 import lol.trq.alts.spi.VaultDirectoryProvider;
+import lol.trq.alts.spi.VaultTransportResolver;
 import lol.trq.alts.store.AltStore;
 import lol.trq.alts.store.SecretStore;
 
@@ -41,6 +42,7 @@ public final class AltsRuntime<H> {
     private final Map<String, AsyncCache<String, GameStats>> gameStatsCaches;
     private final AsyncCache<String, GameStats> emptyStatsCache;
     private final ToastSink toasts;
+    private final VaultTransportResolver vaultResolver;
 
     private AltsRuntime(Builder<H> builder) {
         Objects.requireNonNull(builder.sessionInjector, "SessionInjector required");
@@ -55,6 +57,7 @@ public final class AltsRuntime<H> {
         AltsToasts.bind(builder.toastSink);
 
         this.toasts = builder.toastSink;
+        this.vaultResolver = builder.vaultTransportResolver;
         this.loginService = new AltLoginServiceImpl(builder.sessionInjector, builder.microsoftAuth);
         this.skinCache = new SkinAvatarCache<>(builder.textureUploader, builder.mainThread);
 
@@ -122,6 +125,18 @@ public final class AltsRuntime<H> {
     }
 
     /**
+     * Returns the host's vault transport resolver, or {@code null} when the host did not wire one (the
+     * shared-vault feature is then unavailable). Maps an {@code avp://host} authority to a
+     * {@link lol.trq.alts.vault.transport.VaultTransport} the host implements over its own network stack.
+     *
+     * @return the vault transport resolver, or null when unset
+     * @since 0.6.0
+     */
+    public VaultTransportResolver vaultTransportResolver() {
+        return vaultResolver;
+    }
+
+    /**
      * Accumulating builder that injects the host seams. Required seams are validated in {@link #build()},
      * never in the setters; setters use bare names (no {@code withX} prefixes).
      *
@@ -138,6 +153,7 @@ public final class AltsRuntime<H> {
         private ToastSink toastSink;
         private final Map<String, GameStatsSource> gameStatsSources = new LinkedHashMap<>();
         private MicrosoftAuthConfig microsoftAuth;
+        private VaultTransportResolver vaultTransportResolver;
         private String storeFileName;
         private String storeKeyBinding;
         private String secretsFileName;
@@ -229,6 +245,20 @@ public final class AltsRuntime<H> {
          */
         public Builder<H> microsoftAuth(MicrosoftAuthConfig value) {
             this.microsoftAuth = value;
+            return this;
+        }
+
+        /**
+         * Sets the vault transport resolver (optional; without it the shared-vault feature is
+         * unavailable but every other surface works). The host maps an {@code avp://host} authority to a
+         * {@link lol.trq.alts.vault.transport.VaultTransport} it implements over its own network stack
+         * (HTTP, a gRPC tunnel, a test double).
+         *
+         * @param value the host vault transport resolver
+         * @return this builder
+         */
+        public Builder<H> vaultTransportResolver(VaultTransportResolver value) {
+            this.vaultTransportResolver = value;
             return this;
         }
 
