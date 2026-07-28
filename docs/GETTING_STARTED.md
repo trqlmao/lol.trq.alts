@@ -101,8 +101,19 @@ alts.loginService().loginRefreshToken(myRefreshToken, LoginMode.ADD)
 ```
 
 The token endpoint usually **rotates** the refresh token, issuing a new one and invalidating the old. The
-library persists the rotated value for you; if you keep your own copy, re-read it from
-`result.account().refreshToken()` after every login or the next renewal will fail.
+rotated value is always on `result.account().refreshToken()`, and who persists it depends on where the
+account came from:
+
+- **Accounts in the local store** (added with `LoginMode.ADD`, or loaded by `AltStore.load()`) are
+  updated and written for you.
+- **Every other account** — one you handed to `loginAccount` straight from a shared repository, one
+  logged in with `LoginMode.DIRECT`, or any record the store has never seen — is **not** persisted.
+  `AltStore.updateCredentials` deliberately does nothing for a UUID it does not already hold, because
+  silently writing an account the user chose not to save would be worse than not writing it. For those,
+  read `result.account().refreshToken()` after every login and persist it yourself, or the next renewal
+  redeems a token the service has already invalidated.
+
+The same applies if you keep your own copy of a stored account's token: re-read it after every login.
 
 ### Branching on the failure reason
 
@@ -143,8 +154,22 @@ SharedVault.CreatedRepo repo = vault.createRepo(identity, alts);
 SharedVault.CreatedRepo shared = vault.createRepo(identity, alts, true);
 ```
 
-The policy lives on the manifest and is enforced on both write and read, so it holds even against a peer
-running a modified build.
+The policy lives on the manifest and is enforced at the single encrypt/decrypt choke point, on both write
+and read. Know what that does and does not buy you:
+
+- **It holds against members.** A peer running a modified build that pushes refresh tokens into a
+  withholding repository achieves nothing: every other member strips them on read.
+- **It does not hold against the repository host.** The flag is plain manifest metadata that the server
+  serves; it is neither signed nor bound into the payload AAD, so a malicious or compromised host can
+  serve `shareRefreshTokens: true` to a repository that was created withholding, and members will
+  believe it. Authenticating the manifest is a known gap, not a solved problem — until it lands, the
+  policy is only as trustworthy as whoever hosts the repository.
+
+**Opting in is effectively permanent.** `removeMember` and `rotateKey` re-key the repository so a removed
+member cannot read *future* payloads, but a refresh token that already reached a member's disk is a
+credential they hold outright: nothing in this library, or in any protocol message, can take it back. The
+only real revocation is on the Microsoft side — revoke the account's sessions and change its password.
+Treat enabling the flag as handing every current member durable access to those accounts, forever.
 
 ## Game stats (optional)
 

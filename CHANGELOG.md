@@ -97,6 +97,18 @@ session silently, and shareable into a repository only when that repository opts
   failed later at the server with no useful diagnostic. It now falls through to validation or renewal.
 - Corrected the Alt Vault Protocol spec link in the README (`trqlmao/avp-spec` to `trqlmao/avp`).
 
+### Security
+
+- **Known limitation: the refresh-token sharing policy binds members, not the repository host.**
+  `shareRefreshTokens` is plain manifest metadata the server serves, with no signature over it and no
+  binding into the payload AAD, so a malicious or compromised host can serve `true` for a repository
+  created withholding and every member will honour it. The docs previously claimed the policy held
+  unconditionally; they now state the boundary. Authenticating the manifest is follow-up work.
+- **Opting a repository into refresh-token sharing is effectively irreversible.** `removeMember` and
+  `rotateKey` re-key future payloads, but a refresh token that already reached a member's disk cannot be
+  clawed back by any protocol message — only by revoking the account at the identity provider. Now
+  documented in `docs/GETTING_STARTED.md`.
+
 ### Changed
 
 - **Breaking:** `AltAccount` gains two trailing components, `refreshToken` and `expiresAt`, so positional

@@ -22,8 +22,16 @@ import lol.trq.alts.spi.VaultDirectoryProvider;
  *
  * <p>The directory is supplied by the host through a {@link VaultDirectoryProvider} bound at runtime
  * startup; the store keeps no Minecraft or platform types. This store holds <em>accounts</em> only —
- * accounts may be shared into a multi-member repository, so per-user secrets (API keys, tokens) live
- * separately in {@link SecretStore} and never travel with the accounts.
+ * accounts may be shared into a multi-member repository, so a user's own secrets (API keys and the like)
+ * live separately in {@link SecretStore} and never travel with the accounts.
+ *
+ * <p>One carve-out: an account's OAuth {@code refreshToken} is a credential and it <em>does</em> sit on
+ * the {@link AltAccount} record, because renewal has to work for a shared alt too — otherwise every
+ * member except whoever added it watches the alt die when its access token lapses. It is therefore not
+ * covered by the rule above, and is governed instead by the repository's sharing policy: a repository
+ * withholds refresh tokens unless its manifest opts in, and the strip runs on both write and read (see
+ * {@link lol.trq.alts.vault.SharedVault}). A purely local account is unaffected — its refresh token
+ * never leaves this file.
  *
  * @author trq
  * @since 0.1.0
@@ -130,9 +138,16 @@ public final class AltStore {
 
     /**
      * Replaces the stored entry for {@code account}'s UUID with the given record and persists. Called
-     * after a renewal so the rotated refresh token survives a restart; without it the next process
-     * start would replay a token the authentication service has already invalidated. A no-op if the
-     * UUID is unknown, which is the case for an account that was never added to storage.
+     * after a renewal so the rotated refresh token survives a restart; without it the next process start
+     * would replay a token the authentication service has already invalidated.
+     *
+     * <p><strong>Silently does nothing when the UUID is not already stored</strong>, and that is
+     * deliberate, not an oversight. Accounts reach the login service from places this file is not meant
+     * to mirror — a shared repository, or a one-off {@code LoginMode.DIRECT} login the user explicitly
+     * declined to save — and writing them here would persist credentials the user chose to keep out of
+     * the store, which is a worse failure than not persisting them. The rotated credential is never lost
+     * either way: it is returned on {@code LoginResult.account()}, and for an account the store does not
+     * hold it is the host's job to put it wherever that account actually lives.
      *
      * @param account the account carrying freshly issued credentials
      * @since 0.6.0
