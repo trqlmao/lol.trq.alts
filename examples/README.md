@@ -3,6 +3,17 @@
 Illustrative, dependency-free samples. They are compiled by the `examples` Gradle source set (so they
 cannot drift from the library API) but are not part of the published jar.
 
+## `GettingStartedExample`
+
+The compiled companion to [`../docs/GETTING_STARTED.md`](../docs/GETTING_STARTED.md). Every snippet
+that guide shows is a method here, one per section: building the runtime, logging in and reading the
+caches, silent renewal and refresh-token import, branching on the typed failure reason, and creating a
+shared repository under either refresh-token sharing policy.
+
+This file is the authoritative copy — the guide inlines its key lines. Change the library API and the
+build breaks here, which is the point: markdown alone rots silently. Keep the two in step when either
+moves.
+
 ## `ExampleNetGameStatsSource`
 
 A minimal [`GameStatsSource`](../src/main/java/lol/trq/alts/spi/GameStatsSource.java) for a fictional
