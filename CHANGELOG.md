@@ -34,6 +34,10 @@ session silently, and shareable into a repository only when that repository opts
   is the fallback, and a wholly unknown expiry reads as expired, since renewing a live session is cheap and
   installing a dead one is not.
 - `AltAccount.withTokens(accessToken, refreshToken, expiresAt)` and `AltAccount.hasRefreshToken()`.
+- `AltAccount.mergedOnto(AltAccount existing)` — applies this account's identity and credentials onto a
+  record the store already holds, so re-authenticating an alt refreshes what it logs in with while its
+  bans, provenance, and shared attribution survive. A route that issues no refresh token leaves the
+  stored one in place rather than clearing it.
 - `AltStore.updateCredentials(AltAccount)` and `AltStore.clearRefreshToken(String uuid)` — persisting
   mutators, so a rotated token reaches disk and a spent one does not stay at rest.
 - `HttpUtil.HttpResponse` (status plus parsed body, with `successful()`) and `HttpUtil.postFormForStatus`,
