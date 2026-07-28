@@ -12,10 +12,14 @@ import lol.trq.alts.crypto.VaultIdentity;
  * @param identity the member's unlocked identity
  * @param dataKey the unwrapped data key for the current epoch
  * @param payloadVersion the payload version this context is synced to
+ * @param shareRefreshTokens whether this repository's manifest permits sharing OAuth refresh tokens;
+ *     mirrors {@link lol.trq.alts.vault.transport.VaultManifest#shareRefreshTokens()} so the policy is
+ *     enforced locally on every read and write
  * @author trq
  * @since 0.2.0
  */
-public record RepoContext(String repoId, VaultIdentity identity, RepoDataKey dataKey, long payloadVersion) {
+public record RepoContext(
+        String repoId, VaultIdentity identity, RepoDataKey dataKey, long payloadVersion, boolean shareRefreshTokens) {
 
     /**
      * Returns a copy advanced to a new payload version.
@@ -24,7 +28,7 @@ public record RepoContext(String repoId, VaultIdentity identity, RepoDataKey dat
      * @return the updated context
      */
     public RepoContext withPayloadVersion(long version) {
-        return new RepoContext(repoId, identity, dataKey, version);
+        return new RepoContext(repoId, identity, dataKey, version, shareRefreshTokens);
     }
 
     /**
@@ -34,6 +38,6 @@ public record RepoContext(String repoId, VaultIdentity identity, RepoDataKey dat
      * @return the updated context
      */
     public RepoContext withDataKey(RepoDataKey rotated) {
-        return new RepoContext(repoId, identity, rotated, payloadVersion);
+        return new RepoContext(repoId, identity, rotated, payloadVersion, shareRefreshTokens);
     }
 }

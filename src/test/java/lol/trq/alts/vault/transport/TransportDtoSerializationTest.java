@@ -33,8 +33,8 @@ class TransportDtoSerializationTest {
 
     @Test
     void vaultManifestRoundTrips() {
-        VaultManifest manifest =
-                new VaultManifest("repo-1", "scheme-v1", 2L, 7L, List.of(new MemberEntry("ed", "x", wrappedKey(), 2L)));
+        VaultManifest manifest = new VaultManifest(
+                "repo-1", "scheme-v1", 2L, 7L, List.of(new MemberEntry("ed", "x", wrappedKey(), 2L)), false);
         assertEquals(manifest, GSON.fromJson(GSON.toJson(manifest), VaultManifest.class));
     }
 

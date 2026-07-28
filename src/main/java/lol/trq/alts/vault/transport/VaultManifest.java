@@ -15,6 +15,9 @@ import java.util.Objects;
  * @param keyEpoch the current key-rotation epoch
  * @param payloadVersion the current payload version
  * @param members the member roster
+ * @param shareRefreshTokens whether members may share OAuth refresh tokens through this repository;
+ *     {@code false} by default, because a refresh token grants durable account access rather than the
+ *     roughly one day an access token buys
  * @author trq
  * @since 0.2.0
  */
@@ -23,7 +26,8 @@ public record VaultManifest(
         @SerializedName("schemeId") String schemeId,
         @SerializedName("keyEpoch") long keyEpoch,
         @SerializedName("payloadVersion") long payloadVersion,
-        @SerializedName("members") List<MemberEntry> members) {
+        @SerializedName("members") List<MemberEntry> members,
+        @SerializedName("shareRefreshTokens") boolean shareRefreshTokens) {
 
     /** Validates the required components. */
     public VaultManifest {

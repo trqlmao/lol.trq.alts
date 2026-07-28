@@ -69,7 +69,8 @@ class FederationJoinTest {
                 created.manifest().schemeId(),
                 created.manifest().keyEpoch(),
                 created.manifest().payloadVersion(),
-                List.of(created.manifest().members().get(0), bobEntry));
+                List.of(created.manifest().members().get(0), bobEntry),
+                false);
 
         // Alice replies with a locator; Bob decodes where the repo lives.
         String locatorToken = RepoLocator.of(

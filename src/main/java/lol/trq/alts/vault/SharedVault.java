@@ -74,7 +74,8 @@ public final class SharedVault {
             RepoContext context, EncryptedEnvelope envelope, List<MemberEntry> rewrappedMembers, long newKeyEpoch) {}
 
     /**
-     * Creates a fresh repository owned by {@code creator}, with the given initial alts.
+     * Creates a fresh repository owned by {@code creator}, with the given initial alts. The repository
+     * withholds refresh tokens; use {@link #createRepo(VaultIdentity, List, boolean)} to opt in.
      *
      * @param creator the creating member's unlocked identity
      * @param alts the initial alt payload (may be empty)
@@ -82,14 +83,29 @@ public final class SharedVault {
      * @throws CryptoException if key generation or encryption fails
      */
     public CreatedRepo createRepo(VaultIdentity creator, List<AltAccount> alts) throws CryptoException {
+        return createRepo(creator, alts, false);
+    }
+
+    /**
+     * Creates a fresh repository owned by {@code creator} with an explicit refresh-token sharing policy.
+     *
+     * @param creator the creating member's unlocked identity
+     * @param alts the initial alt payload (may be empty)
+     * @param shareRefreshTokens whether members may share refresh tokens through this repository
+     * @return the created repository artifacts
+     * @throws CryptoException if key generation or encryption fails
+     * @since 0.6.0
+     */
+    public CreatedRepo createRepo(VaultIdentity creator, List<AltAccount> alts, boolean shareRefreshTokens)
+            throws CryptoException {
         String repoId = UUID.randomUUID().toString();
         RepoDataKey dataKey = RepoDataKey.generate();
         MemberEntry creatorEntry = memberEntry(creator.identityId(), creator.keyAgreementPublicKey(), dataKey);
         long version = 1L;
-        VaultManifest manifest =
-                new VaultManifest(repoId, scheme.schemeId(), dataKey.epoch(), version, List.of(creatorEntry));
-        EncryptedEnvelope envelope = encrypt(repoId, version, dataKey.epoch(), dataKey, alts);
-        RepoContext context = new RepoContext(repoId, creator, dataKey, version);
+        VaultManifest manifest = new VaultManifest(
+                repoId, scheme.schemeId(), dataKey.epoch(), version, List.of(creatorEntry), shareRefreshTokens);
+        EncryptedEnvelope envelope = encrypt(repoId, version, dataKey.epoch(), dataKey, alts, shareRefreshTokens);
+        RepoContext context = new RepoContext(repoId, creator, dataKey, version, shareRefreshTokens);
         return new CreatedRepo(context, manifest, envelope);
     }
 
@@ -110,7 +126,8 @@ public final class SharedVault {
         }
         RepoDataKey dataKey = RepoDataKey.unwrap(
                 scheme, entry.wrappedDataKey(), identity.keyAgreementPrivateKey(), manifest.keyEpoch());
-        return new RepoContext(manifest.repoId(), identity, dataKey, manifest.payloadVersion());
+        return new RepoContext(
+                manifest.repoId(), identity, dataKey, manifest.payloadVersion(), manifest.shareRefreshTokens());
     }
 
     /**
@@ -141,7 +158,7 @@ public final class SharedVault {
      */
     public EncryptedEnvelope encryptPayload(RepoContext ctx, List<AltAccount> alts) throws CryptoException {
         long nextVersion = ctx.payloadVersion() + 1;
-        return encrypt(ctx.repoId(), nextVersion, ctx.dataKey().epoch(), ctx.dataKey(), alts);
+        return encrypt(ctx.repoId(), nextVersion, ctx.dataKey().epoch(), ctx.dataKey(), alts, ctx.shareRefreshTokens());
     }
 
     /**
@@ -169,7 +186,9 @@ public final class SharedVault {
         byte[] aad = PayloadCipher.aad(env.repoId(), env.payloadVersion(), env.keyEpoch());
         byte[] plaintext = PayloadCipher.decrypt(ctx.dataKey().secretKey(), iv, aad, ciphertext);
         VaultPayload payload = GSON.fromJson(new String(plaintext, StandardCharsets.UTF_8), VaultPayload.class);
-        return payload == null || payload.alts() == null ? new ArrayList<>() : payload.alts();
+        return payload == null || payload.alts() == null
+                ? new ArrayList<>()
+                : applyPolicy(payload.alts(), ctx.shareRefreshTokens());
     }
 
     /**
@@ -198,8 +217,10 @@ public final class SharedVault {
                     newEpoch));
         }
         long newVersion = ctx.payloadVersion() + 1;
-        RepoContext newCtx = new RepoContext(ctx.repoId(), ctx.identity(), newDataKey, newVersion);
-        EncryptedEnvelope envelope = encrypt(ctx.repoId(), newVersion, newEpoch, newDataKey, currentAlts);
+        RepoContext newCtx =
+                new RepoContext(ctx.repoId(), ctx.identity(), newDataKey, newVersion, ctx.shareRefreshTokens());
+        EncryptedEnvelope envelope =
+                encrypt(ctx.repoId(), newVersion, newEpoch, newDataKey, currentAlts, ctx.shareRefreshTokens());
         return new RotationResult(newCtx, envelope, rewrapped, newEpoch);
     }
 
@@ -226,14 +247,32 @@ public final class SharedVault {
     }
 
     private EncryptedEnvelope encrypt(
-            String repoId, long version, long epoch, RepoDataKey dataKey, List<AltAccount> alts)
+            String repoId,
+            long version,
+            long epoch,
+            RepoDataKey dataKey,
+            List<AltAccount> alts,
+            boolean shareRefreshTokens)
             throws CryptoException {
-        String json = GSON.toJson(new VaultPayload(new ArrayList<>(alts), version));
+        String json = GSON.toJson(new VaultPayload(applyPolicy(alts, shareRefreshTokens), version));
         byte[] iv = PayloadCipher.newIv();
         byte[] aad = PayloadCipher.aad(repoId, version, epoch);
         byte[] ciphertext = PayloadCipher.encrypt(dataKey.secretKey(), iv, aad, json.getBytes(StandardCharsets.UTF_8));
         Base64.Encoder b64 = Base64.getEncoder();
         return new EncryptedEnvelope(repoId, version, epoch, b64.encodeToString(iv), b64.encodeToString(ciphertext));
+    }
+
+    /**
+     * Applies the repository's refresh-token policy to a list of alts. Stripping happens on both write
+     * and read: on write so the credential never reaches the server, and on read so a peer running a
+     * modified build cannot push tokens into a repository whose policy forbids them.
+     */
+    private static List<AltAccount> applyPolicy(List<AltAccount> alts, boolean shareRefreshTokens) {
+        List<AltAccount> copy = new ArrayList<>(alts.size());
+        for (AltAccount alt : alts) {
+            copy.add(shareRefreshTokens ? alt : alt.withTokens(alt.accessToken(), null, 0L));
+        }
+        return copy;
     }
 
     /**

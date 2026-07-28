@@ -49,7 +49,8 @@ class SharedVaultTest {
                 created.manifest().schemeId(),
                 created.manifest().keyEpoch(),
                 created.manifest().payloadVersion(),
-                List.of(created.manifest().members().get(0), bobEntry));
+                List.of(created.manifest().members().get(0), bobEntry),
+                false);
 
         // Bob opens the repo and decrypts the payload Alice wrote.
         RepoContext bobCtx = vault.openRepo(manifest, bob);
@@ -76,7 +77,8 @@ class SharedVaultTest {
                 created.manifest().schemeId(),
                 rotation.newKeyEpoch(),
                 rotation.context().payloadVersion(),
-                rotation.rewrappedMembers());
+                rotation.rewrappedMembers(),
+                false);
 
         // Bob still reads the rotated payload.
         RepoContext bobCtx = vault.openRepo(rotated, bob);
@@ -87,7 +89,12 @@ class SharedVaultTest {
 
         // Even with her stale entry, Carol's old key cannot decrypt the new-epoch envelope.
         VaultManifest carolStillListed = new VaultManifest(
-                rotated.repoId(), rotated.schemeId(), 0, created.manifest().payloadVersion(), List.of(carolEntry));
+                rotated.repoId(),
+                rotated.schemeId(),
+                0,
+                created.manifest().payloadVersion(),
+                List.of(carolEntry),
+                false);
         RepoContext carolOldCtx = vault.openRepo(carolStillListed, carol);
         assertThrows(Exception.class, () -> vault.decryptPayload(carolOldCtx, rotation.envelope(), 0));
         // sanity: bobEntry was a real entry under the original epoch
