@@ -74,6 +74,78 @@ MyHandle head = alts.skinCache().get(account.uuid());
 GameStats stats = alts.gameStats("example.net").get(account.uuid());
 ```
 
+## Refresh tokens and silent renewal
+
+A Minecraft access token lasts roughly a day. A Microsoft login also yields an OAuth **refresh token**,
+which the library stores on the account (`AltAccount.refreshToken()`) and redeems to mint a new session
+without a browser round.
+
+You do not have to drive this. `loginAccount` handles it:
+
+```java
+// Reuses the stored session if it is still live; otherwise renews from the refresh token,
+// persists the rotated credential, and installs the session — all without a browser.
+alts.loginService().loginAccount(saved)
+        .thenAccept(result -> { /* ... */ });
+```
+
+Renewal runs on two triggers: proactively, when the stored expiry (or the token's own `exp` claim) says
+the access token is spent, and once reactively, when a token that looked live is refused — which is what
+happens after a password change. It never retries in a loop.
+
+To import a refresh token you already hold, use the login route directly:
+
+```java
+alts.loginService().loginRefreshToken(myRefreshToken, LoginMode.ADD)
+        .thenAccept(result -> { /* ... */ });
+```
+
+The token endpoint usually **rotates** the refresh token, issuing a new one and invalidating the old. The
+library persists the rotated value for you; if you keep your own copy, re-read it from
+`result.account().refreshToken()` after every login or the next renewal will fail.
+
+### Branching on the failure reason
+
+Every `LoginResult` carries a typed `AltLoginCallback.FailureReason`, so you can pick the right prompt
+without matching on a message string (which does not survive obfuscation or localization):
+
+```java
+alts.loginService().loginAccount(saved).thenAccept(result -> {
+    if (result.success()) {
+        return;
+    }
+    switch (result.reason()) {
+        // The credential is permanently spent and has been discarded. Send the user
+        // through a fresh interactive login.
+        case REAUTH_REQUIRED -> promptMicrosoftLogin(saved);
+        // Transient: the service was unreachable or failed. The stored refresh token is
+        // untouched, so offer a retry.
+        case NETWORK -> showRetry(result.message());
+        case NOT_CONFIGURED -> showError("Microsoft login is not configured");
+        default -> showError(result.message());
+    }
+});
+```
+
+The distinction matters: a 5xx or a dropped connection never costs the user their refresh token, while a
+rejection the service calls permanent clears it, so the account is not left replaying a dead credential.
+
+### Sharing policy
+
+A refresh token is a durable credential, so it does **not** travel into a shared vault repository by
+default. Opt in per repository at creation:
+
+```java
+// Withholds refresh tokens (the default).
+SharedVault.CreatedRepo repo = vault.createRepo(identity, alts);
+
+// Shares them with every member of this repository.
+SharedVault.CreatedRepo shared = vault.createRepo(identity, alts, true);
+```
+
+The policy lives on the manifest and is enforced on both write and read, so it holds even against a peer
+running a modified build.
+
 ## Game stats (optional)
 
 Stats are server-agnostic: you implement a `GameStatsSource` per server that returns ready-to-render

@@ -6,13 +6,13 @@
 
 > Drop-in Minecraft account-manager core for Fabric mods: auth, encrypted local storage, and async player data, all host-agnostic.
 
-**lol.trq.alts** is a standalone, renderer-agnostic account-management library for Minecraft Fabric mods. It provides Microsoft, cookie, session, and offline login, an encrypted on-disk account store, async player-head and per-server game-stats caches, and a clean set of host seams, with no Minecraft or renderer types of its own.
+**lol.trq.alts** is a standalone, renderer-agnostic account-management library for Minecraft Fabric mods. It provides Microsoft, refresh-token, cookie, session, and offline login, an encrypted on-disk account store, async player-head and per-server game-stats caches, and a clean set of host seams, with no Minecraft or renderer types of its own.
 
 ## Features
 
-- **Four login methods.** Microsoft OAuth 2.0, browser-cookie, session-token, and offline, all `CompletableFuture`-based behind a single `AltLoginService`. You supply your own Azure app client id for Microsoft login (`MicrosoftAuthConfig`); the library ships no shared default.
-- **Encrypted local store.** Accounts are persisted with AES-256-GCM and PBKDF2 in a host-chosen directory; the file never holds plaintext credentials at rest.
-- **Zero-knowledge shared vault.** Share an alt repository between members with end-to-end encryption (Ed25519 identities, X25519-wrapped per-repo keys, AES-256-GCM payloads). The sync server stores only ciphertext, wrapped keys, public keys, and counters, so it can decrypt nothing.
+- **Five login methods.** Microsoft OAuth 2.0, OAuth refresh token, browser-cookie, session-token, and offline, all `CompletableFuture`-based behind a single `AltLoginService`. You supply your own Azure app client id for Microsoft login (`MicrosoftAuthConfig`); the library ships no shared default.
+- **Encrypted local store.** Accounts are persisted with AES-256-GCM and PBKDF2 in a host-chosen directory; the file never holds plaintext credentials at rest. Stored Microsoft sessions renew silently from their refresh token instead of expiring after roughly a day, so a saved account does not need a fresh browser round every time its access token lapses.
+- **Zero-knowledge shared vault.** Share an alt repository between members with end-to-end encryption (Ed25519 identities, X25519-wrapped per-repo keys, AES-256-GCM payloads). The sync server stores only ciphertext, wrapped keys, public keys, and counters, so it can decrypt nothing. Refresh tokens are withheld from a shared repository unless its manifest opts in, because a refresh token grants durable account access rather than the day an access token buys.
 - **Federated.** Repositories are addressed `avp://host/repoId` and reachable across independently hosted servers using one portable identity, so different clients can share alts without a central server. The wire contract is the open [Alt Vault Protocol](https://github.com/trqlmao/avp).
 - **Async caches.** A small `AsyncCache<K,V>` primitive (lazy, non-blocking, stale-while-revalidate) powers player-head avatars and optional, server-agnostic game stats. A host registers a `GameStatsSource` per server and the card renders whatever stat chips it returns; the library never interprets them.
 - **Host-agnostic.** The library never imports your mod. You provide a handful of backend seams (session injection, storage directory, texture upload, main-thread executor, toasts, stats source) and wire it once.
@@ -67,6 +67,10 @@ AltsRuntime<MyHandle> alts = new AltsRuntime.Builder<MyHandle>()
 // 2. Log in.
 alts.loginService().loginMicrosoft(LoginMode.ADD)
         .thenAccept(result -> { /* result.success(), result.account() */ });
+
+// Renew from a refresh token, no browser step.
+alts.loginService().loginRefreshToken(storedRefreshToken, LoginMode.ADD)
+        .thenAccept(result -> { /* result.success(), result.reason() */ });
 ```
 
 See [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) for a full walkthrough and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the internals.

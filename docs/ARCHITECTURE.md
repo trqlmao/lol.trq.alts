@@ -12,7 +12,7 @@
             ┌───────────────┴─────────────────────────────┐
             │  AltsRuntime  — wiring root + Builder         │
             ├──────────────────────────────────────────────┤
-  library   │ auth/   login flows (MS / cookie / session / offline)
+  library   │ auth/   login flows (MS / refresh / cookie / session / offline)
             │ store/  AltStore (encrypted file) + EncryptionUtil
             │ cache/  AsyncCache<K,V>
             │ skin/   SkinAvatarCache<H>
@@ -28,13 +28,13 @@
 
 - **`spi/` seams** — the entire host boundary. The library calls these interfaces; it never imports a host class. This is what makes the same core usable from different mods and different renderers.
 
-- **`auth/`** — `AltLoginService` exposes four `CompletableFuture`-based login methods. The implementation runs the OAuth / cookie / token flows off-thread and hands the resolved identity to the host's `SessionInjector` as a transport-neutral `SessionData`.
+- **`auth/`** — `AltLoginService` exposes five `CompletableFuture`-based login methods. The implementation runs the OAuth / cookie / token flows off-thread and hands the resolved identity to the host's `SessionInjector` as a transport-neutral `SessionData`. `loginAccount` renews an expired session in place from the account's stored refresh token — proactively when `TokenExpiry` says the access token is spent, and once reactively when the services refuse it — persisting the rotated credential before installing the session. Outcomes carry a typed `AltLoginCallback.FailureReason`, so a host can tell `REAUTH_REQUIRED` (the credential is permanently spent) from `NETWORK` (retryable) without matching on a message string.
 
 - **`store/`** — `AltStore` is a static façade over an encrypted on-disk file. `EncryptionUtil` does AES-256-GCM with a PBKDF2-derived, machine-bound key. The filename and the key-binding constant are host-configurable so different hosts (and migrations from earlier layouts) don't collide.
 
 - **`cache/AsyncCache<K,V>`** — the reusable async-lookup primitive. `get(key)` never blocks: it returns the cached value or `null`, firing a background fetch on a miss. Entry states (pending / failed / value) are encoded as sentinels because `ConcurrentHashMap` forbids nulls. A positive TTL makes it stale-while-revalidate. Both `SkinAvatarCache` and the per-server game-stats caches are built on this; `AltsRuntime.gameStats(serverId)` returns one cache per registered `GameStatsSource`.
 
-- **`crypto/` + `vault/SharedVault`** — the zero-knowledge shared-repository layer. A member is an Ed25519 identity (their stable id) paired with an X25519 key. `SharedVault` does pure client-side crypto over plain DTOs: it generates a per-repo data key, wraps it to each member's X25519 key (`KeyWrapScheme`), and encrypts the `AltAccount` payload under AES-256-GCM with the repo id / version / epoch bound into the AAD so stale or spliced ciphertext fails to authenticate. It never touches the network, which keeps the zero-knowledge guarantee provable: the server only ever sees what these methods emit (ciphertext, wrapped keys, public keys, counters).
+- **`crypto/` + `vault/SharedVault`** — the zero-knowledge shared-repository layer. A member is an Ed25519 identity (their stable id) paired with an X25519 key. `SharedVault` does pure client-side crypto over plain DTOs: it generates a per-repo data key, wraps it to each member's X25519 key (`KeyWrapScheme`), and encrypts the `AltAccount` payload under AES-256-GCM with the repo id / version / epoch bound into the AAD so stale or spliced ciphertext fails to authenticate. It never touches the network, which keeps the zero-knowledge guarantee provable: the server only ever sees what these methods emit (ciphertext, wrapped keys, public keys, counters). The manifest's `shareRefreshTokens` flag gates whether an account's refresh token and expiry may travel through the repository at all; it defaults to withholding, and the strip runs at the single encrypt/decrypt choke point on **both** write and read — on write so the credential never reaches the server, and on read so a peer running a modified build cannot push tokens into a repository whose policy forbids them.
 
 - **`vault/transport/`** — the network boundary as plain DTOs and a `VaultTransport` interface. The library names no server or wire protocol; a host plugs in gRPC, HTTP/JSON, or a test double. `KeyBindingVerifier` (and the concrete `IssuerSignedKeyBindingVerifier`) is the anti-MITM seam: before wrapping a data key to keys a server served, a member can require an identity-provider signature over those keys.
 

@@ -7,8 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-28
+
+Refresh tokens become a first-class credential: importable as a login route, redeemable to renew a stored
+session silently, and shareable into a repository only when that repository opts in.
+
 ### Added
 
+- **Refresh-token login route** — `AltLoginService.loginRefreshToken(refreshToken, mode)` redeems a stored
+  OAuth refresh token for a live session, skipping the interactive browser step entirely.
+- **Silent renewal in `loginAccount`** — a stored Microsoft account no longer dies with its access token.
+  It renews from its refresh token proactively (when the expiry says the token is spent) and once
+  reactively (when a token that looked live is refused, as after a password change), persisting the
+  rotated credential before installing the session. Renewal never loops.
+- `MicrosoftAuthUtil.authenticateWithRefreshToken(config, refreshToken)` — starts the existing Xbox Live /
+  XSTS / Minecraft services chain from a `grant_type=refresh_token` exchange instead of an authorization
+  code. Failures surface as `MicrosoftAuthUtil.RefreshRejectedException`, whose `permanent()` separates a
+  token that will never work again (4xx) from a failure worth retrying (5xx or transport), so an outage
+  never costs a user a working credential.
+- `AltLoginCallback.FailureReason` (`NONE`, `UNKNOWN`, `REAUTH_REQUIRED`, `INVALID_TOKEN`, `NETWORK`,
+  `NOT_CONFIGURED`) with a matching `LoginResult.failure(String, FailureReason)` factory, so a host can
+  branch on the outcome instead of matching a human-readable message that obfuscation and localization
+  both change.
+- `TokenExpiry` — expiry arithmetic for access tokens: `SKEW_MILLIS`, `jwtExpiryMillis(String)`, and
+  `isExpired(AltAccount, Clock)`. The account's stored expiry wins when known, the token's own `exp` claim
+  is the fallback, and a wholly unknown expiry reads as expired, since renewing a live session is cheap and
+  installing a dead one is not.
+- `AltAccount.withTokens(accessToken, refreshToken, expiresAt)` and `AltAccount.hasRefreshToken()`.
+- `AltStore.updateCredentials(AltAccount)` and `AltStore.clearRefreshToken(String uuid)` — persisting
+  mutators, so a rotated token reaches disk and a spent one does not stay at rest.
+- `HttpUtil.HttpResponse` (status plus parsed body, with `successful()`) and `HttpUtil.postFormForStatus`,
+  which keeps the error body so a caller can classify a rejection rather than collapsing every non-2xx to
+  `null`.
+- `AccountNetworkUtil.fetchProfileFromToken(String token, String profileUrl)` — a host fronting Minecraft
+  services with its own proxy now validates through the same route it authenticates through. The
+  one-argument overload is unchanged and delegates to the public default.
+- **Per-repository refresh-token sharing policy** — `SharedVault.createRepo(identity, alts,
+  shareRefreshTokens)` alongside the existing two-argument form, backed by `shareRefreshTokens` on
+  `VaultManifest` and `RepoContext`. Repositories withhold refresh tokens unless the manifest opts in, and
+  the strip runs at the single encrypt/decrypt choke point on **both** write and read — on write so the
+  credential never reaches the server, and on read so a peer running a modified build cannot push tokens
+  into a repository whose policy forbids them.
 - AVP conformance-vector tests (`AvpConformanceVectorsTest`). The crypto primitives and envelope
   compositions are now gated byte for byte against the published Alt Vault Protocol vectors, vendored under
   `src/test/resources/avp-vectors/` from `trqlmao/avp`: HKDF, X25519, Ed25519, the AAD and
@@ -18,7 +57,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Expired tokens no longer report a successful login.** The fast JWT path read a token's name and UUID
+  claims without ever inspecting `exp`, so an expired token reported success, installed a dead session, and
+  failed later at the server with no useful diagnostic. It now falls through to validation or renewal.
 - Corrected the Alt Vault Protocol spec link in the README (`trqlmao/avp-spec` to `trqlmao/avp`).
+
+### Changed
+
+- **Breaking:** `AltAccount` gains two trailing components, `refreshToken` and `expiresAt`, so positional
+  construction of the record must supply them (`AltAccount.of` is unchanged). Both are absent on accounts
+  written by earlier versions, which reads as "no refresh token, expiry unknown" and therefore renews on
+  first use — existing `accounts.dat` files load unchanged.
+- **Breaking:** `AltLoginCallback.LoginResult` gains a trailing `FailureReason` component. The existing
+  `LoginResult.failure(String)` is retained and maps to `UNKNOWN`, so only direct positional construction
+  of the record breaks.
+- **Breaking:** `MinecraftProfile` gains `refreshToken` and `expiresAt` components. The stamped expiry
+  comes from the Minecraft services token (roughly a day), not the Microsoft OAuth token (roughly an
+  hour), so a renewed account is not marked expired twenty-three hours early.
+- **Breaking:** `AltLoginService` gains an abstract `loginRefreshToken` method, so any host implementing
+  the interface directly must add it. Hosts using `AltsRuntime` are unaffected.
+- **Breaking:** `VaultManifest` and `RepoContext` each gain a trailing `shareRefreshTokens` component.
+  `SharedVault.createRepo` keeps its two-argument form, which withholds. A manifest written by an earlier
+  version carries no such key and deserializes to `false`, which is the safe reading.
 
 ## [0.5.0] - 2026-06-01
 
