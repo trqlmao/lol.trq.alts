@@ -32,15 +32,29 @@ public final class AccountNetworkUtil {
     }
 
     /**
-     * Validates a Minecraft access token and retrieves the associated profile details.
+     * Validates a Minecraft access token against the default profile endpoint.
      *
      * @param token the Minecraft/Bearer access token to validate
      * @return a String array containing {@code [username, uuid]}, or {@code null} if the token is invalid
      * @throws Exception if a network error occurs during the request
      */
     public static String[] fetchProfileFromToken(String token) throws Exception {
-        JsonObject response = HttpUtil.get(
-                "https://api.minecraftservices.com/minecraft/profile", Map.of("Authorization", "Bearer " + token));
+        return fetchProfileFromToken(token, MicrosoftAuthConfig.DEFAULT_MINECRAFT_PROFILE_URL);
+    }
+
+    /**
+     * Validates a Minecraft access token against a caller-supplied profile endpoint, so a host that
+     * fronts Minecraft services with its own proxy validates through the same route it authenticates
+     * through.
+     *
+     * @param token the Minecraft/Bearer access token to validate
+     * @param profileUrl the Minecraft services profile endpoint
+     * @return a String array containing {@code [username, uuid]}, or {@code null} if the token is invalid
+     * @throws Exception if a network error occurs during the request
+     * @since 0.6.0
+     */
+    public static String[] fetchProfileFromToken(String token, String profileUrl) throws Exception {
+        JsonObject response = HttpUtil.get(profileUrl, Map.of("Authorization", "Bearer " + token));
 
         if (response != null && response.has("name") && response.has("id")) {
             return new String[] {
