@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'lol.trq'
-version = '0.6.1'
+version = '0.6.2'
 base { archivesName = 'lol.trq.alts' }
 
 repositories { mavenCentral() }

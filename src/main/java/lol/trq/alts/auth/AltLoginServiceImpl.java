@@ -174,7 +174,12 @@ public class AltLoginServiceImpl implements AltLoginService {
             return CompletableFuture.completedFuture(
                     AltLoginCallback.LoginResult.failure("Refresh token empty", FailureReason.INVALID_TOKEN));
         }
-        return MicrosoftAuthUtil.authenticateWithRefreshToken(microsoftAuth, refreshToken)
+        String cleaned = cleanRefreshToken(refreshToken);
+        if (cleaned.isBlank()) {
+            return CompletableFuture.completedFuture(
+                    AltLoginCallback.LoginResult.failure("Refresh token empty", FailureReason.INVALID_TOKEN));
+        }
+        return MicrosoftAuthUtil.authenticateWithRefreshToken(microsoftAuth, cleaned)
                 .thenApply(profile -> finalizeLogin(profile, AccountType.MICROSOFT, mode))
                 .exceptionally(ex -> refreshFailure(ex, null));
     }
@@ -443,6 +448,37 @@ public class AltLoginServiceImpl implements AltLoginService {
      * @param t the raw token
      * @return the sanitized token
      */
+    /**
+     * Sanitizes a pasted refresh token. Tokens are routinely copied out of account lists that prefix
+     * them with a name (`user:token`) or out of an HTTP header, and the surrounding text is invisible
+     * in a password-style input. Left in place it is sent to the token endpoint as part of the
+     * credential, which the service rejects as an invalid grant — a failure that reads to the user as
+     * "my token is bad" rather than "my paste was bad".
+     *
+     * <p>Kept separate from {@link #cleanToken(String)}, which selects the {@code eyJ}-prefixed segment
+     * of a JWT and so cannot recognise a refresh token at all.
+     *
+     * @param raw the pasted token, possibly wrapped in surrounding text
+     * @return the token with any name prefix, bearer prefix, quoting, and whitespace removed
+     */
+    private String cleanRefreshToken(String raw) {
+        String t = raw.trim();
+        if (t.length() >= 2 && ((t.startsWith("\"") && t.endsWith("\"")) || (t.startsWith("'") && t.endsWith("'")))) {
+            t = t.substring(1, t.length() - 1).trim();
+        }
+        if (t.toLowerCase().startsWith("bearer ")) {
+            t = t.substring(7).trim();
+        }
+        if (t.contains(":")) {
+            for (String part : t.split(":")) {
+                if (part.startsWith("M.")) {
+                    return part.trim();
+                }
+            }
+        }
+        return t;
+    }
+
     private String cleanToken(String t) {
         t = t.trim();
         if (t.contains(":")) {

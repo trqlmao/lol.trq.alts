@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-07-28
+
+### Fixed
+
+- `loginRefreshToken` now sanitizes the token it is given. Refresh tokens are pasted, and they are
+  routinely pasted out of account lists that prefix them with a name (`name:token`), out of an
+  `Authorization` header, or out of a quoted config value. `loginSession` has always stripped that
+  surrounding text; the refresh route did not, so it went to the token endpoint as part of the
+  credential and came back as an invalid grant. In a password-style input the stray prefix is
+  invisible, so the failure was indistinguishable from a genuinely dead token. Note that
+  `loginSession`'s existing cleaner could not have covered this: it selects the `eyJ`-prefixed segment
+  of a JWT and cannot recognise a refresh token.
+
 ## [0.6.1] - 2026-07-28
 
 ### Added

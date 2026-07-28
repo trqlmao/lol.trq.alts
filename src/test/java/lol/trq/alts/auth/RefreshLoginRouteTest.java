@@ -130,6 +130,42 @@ class RefreshLoginRouteTest {
         assertEquals(AccountType.MICROSOFT, persisted.type());
     }
 
+    /**
+     * Refresh tokens are pasted, and they are pasted out of account lists that prefix them with a name,
+     * out of HTTP headers, and out of quoted config values. The surrounding text is invisible in a
+     * password-style field, so it reaches the token endpoint as part of the credential and comes back
+     * as an invalid grant — indistinguishable, to the user, from a genuinely dead token.
+     */
+    @Test
+    void aPastedTokenIsSanitisedBeforeItReachesTheTokenEndpoint() throws Exception {
+        // Shaped like a Microsoft account token; deliberately not a real one.
+        String token = "M.C500_EXAMPLE.0.U.NotARealToken";
+
+        for (String pasted : new String[] {
+            "listedname:" + token, "Bearer " + token, "bearer " + token, "  " + token + "  ", "\"" + token + "\""
+        }) {
+            tokenRequestBody.set("");
+            LoginResult result =
+                    service().loginRefreshToken(pasted, LoginMode.DIRECT).get();
+
+            assertTrue(result.success(), "paste form <" + pasted + "> failed: " + result.message());
+            assertTrue(
+                    tokenRequestBody.get().contains("refresh_token=" + token + "&"),
+                    "paste form <" + pasted + "> reached the wire uncleaned: " + tokenRequestBody.get());
+        }
+    }
+
+    @Test
+    void aTokenWithNoSurroundingTextIsLeftAlone() throws Exception {
+        String token = "M.C500_EXAMPLE.0.U.NotARealToken";
+
+        service().loginRefreshToken(token, LoginMode.DIRECT).get();
+
+        assertTrue(
+                tokenRequestBody.get().contains("refresh_token=" + token + "&"),
+                "a clean token must pass through untouched: " + tokenRequestBody.get());
+    }
+
     @Test
     void reimportingARefreshTokenMergesOntoTheStoredRecord() throws Exception {
         AltAccount stored = AltAccount.of(UUID, "Alex", "old-access", AccountType.MICROSOFT)
