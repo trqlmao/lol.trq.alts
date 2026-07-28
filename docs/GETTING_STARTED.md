@@ -2,6 +2,11 @@
 
 This guide walks through wiring **lol.trq.alts** into a Minecraft Fabric mod.
 
+Every Java snippet below is inlined from
+[`examples/GettingStartedExample.java`](../examples/GettingStartedExample.java), which the `examples`
+Gradle source set compiles on every build. That file is the authoritative copy: if a snippet here and
+the example ever disagree, the example is right.
+
 ## 1. Add the dependency
 
 ```gradle
@@ -53,6 +58,8 @@ AltsRuntime<MyHandle> alts = new AltsRuntime.Builder<MyHandle>()
 
 For Microsoft login you must register your own [Azure application](https://learn.microsoft.com/azure/active-directory/develop/quickstart-register-app) and pass its client id — the library intentionally ships no shared default. Keep the id out of source control (for example in a git-ignored `.env` your build reads), and override the scope or endpoints with `MicrosoftAuthConfig.of(id).withScope(...)` / `.withEndpoints(...)` only if you front the services with a proxy.
 
+Compiled as `GettingStartedExample.buildRuntime`.
+
 ## 4. Use it
 
 ```java
@@ -67,12 +74,18 @@ alts.loginService().loginMicrosoft(LoginMode.ADD)
 // Stored accounts
 List<AltAccount> saved = AltStore.accounts();
 
-// Lazy, cached avatar (returns null until the background fetch lands)
-MyHandle head = alts.skinCache().get(account.uuid());
+for (AltAccount account : saved) {
+    // Lazy, cached avatar. Keyed by USERNAME, not UUID; null until the background fetch lands.
+    MyHandle head = alts.skinCache().get(account.username());
 
-// Lazy, cached per-server game stats (null if no source for that server, or fetch pending)
-GameStats stats = alts.gameStats("example.net").get(account.uuid());
+    // Lazy, cached per-server game stats (null if no source for that server, or fetch pending)
+    GameStats stats = alts.gameStats("example.net").get(account.uuid());
+
+    renderCard(head, stats);
+}
 ```
+
+Compiled as `GettingStartedExample.logInAndRead`.
 
 ## Refresh tokens and silent renewal
 
@@ -83,9 +96,12 @@ without a browser round.
 You do not have to drive this. `loginAccount` handles it:
 
 ```java
+// One stored account, for example out of AltStore.accounts().
+AltAccount account = saved.get(0);
+
 // Reuses the stored session if it is still live; otherwise renews from the refresh token,
 // persists the rotated credential, and installs the session — all without a browser.
-alts.loginService().loginAccount(saved)
+alts.loginService().loginAccount(account)
         .thenAccept(result -> { /* ... */ });
 ```
 
@@ -96,8 +112,16 @@ happens after a password change. It never retries in a loop.
 To import a refresh token you already hold, use the login route directly:
 
 ```java
-alts.loginService().loginRefreshToken(myRefreshToken, LoginMode.ADD)
-        .thenAccept(result -> { /* ... */ });
+alts.loginService().loginRefreshToken(myRefreshToken, LoginMode.ADD).thenAccept(result -> {
+    if (result.success()) {
+        // Always the rotated value; persist it for any account the store does not hold.
+        persist(result.account().refreshToken());
+    } else if (result.reason() == AltLoginCallback.FailureReason.NOT_CONFIGURED) {
+        // Only the routes that talk to Microsoft — loginMicrosoft and loginRefreshToken — can
+        // report this one. loginAccount never does.
+        showError("Microsoft login is not configured");
+    }
+});
 ```
 
 The token endpoint usually **rotates** the refresh token, issuing a new one and invalidating the old. The
@@ -121,18 +145,17 @@ Every `LoginResult` carries a typed `AltLoginCallback.FailureReason`, so you can
 without matching on a message string (which does not survive obfuscation or localization):
 
 ```java
-alts.loginService().loginAccount(saved).thenAccept(result -> {
+alts.loginService().loginAccount(account).thenAccept(result -> {
     if (result.success()) {
         return;
     }
     switch (result.reason()) {
         // The credential is permanently spent and has been discarded. Send the user
         // through a fresh interactive login.
-        case REAUTH_REQUIRED -> promptMicrosoftLogin(saved);
+        case REAUTH_REQUIRED -> promptMicrosoftLogin(account);
         // Transient: the service was unreachable or failed. The stored refresh token is
         // untouched, so offer a retry.
         case NETWORK -> showRetry(result.message());
-        case NOT_CONFIGURED -> showError("Microsoft login is not configured");
         default -> showError(result.message());
     }
 });
@@ -141,18 +164,37 @@ alts.loginService().loginAccount(saved).thenAccept(result -> {
 The distinction matters: a 5xx or a dropped connection never costs the user their refresh token, while a
 rejection the service calls permanent clears it, so the account is not left replaying a dead credential.
 
+Which reasons a route can emit is worth knowing: `NOT_CONFIGURED` comes only from `loginMicrosoft` and
+`loginRefreshToken`, so branching on it inside a `loginAccount` handler is dead code. Compiled as
+`GettingStartedExample.logInStoredAccountWithBranching`.
+
 ### Sharing policy
 
 A refresh token is a durable credential, so it does **not** travel into a shared vault repository by
-default. Opt in per repository at creation:
+default. Opt in per repository at creation.
+
+The facade is stateless and the identity is the member's key pair — created once, then unlocked from
+its stored form on later runs. Creating an identity and creating a repository both throw the checked
+`CryptoException`, so this block needs a `try` (or a `throws`):
 
 ```java
-// Withholds refresh tokens (the default).
-SharedVault.CreatedRepo repo = vault.createRepo(identity, alts);
+try {
+    SharedVault vault = new SharedVault(new X25519HkdfAesGcmKeyWrap());
+    VaultIdentity identity = VaultIdentity.create(passphrase);
+    List<AltAccount> payload = AltStore.accounts();
 
-// Shares them with every member of this repository.
-SharedVault.CreatedRepo shared = vault.createRepo(identity, alts, true);
+    // Withholds refresh tokens (the default).
+    SharedVault.CreatedRepo repo = vault.createRepo(identity, payload);
+
+    // Shares them with every member of this repository.
+    SharedVault.CreatedRepo sharing = vault.createRepo(identity, payload, true);
+} catch (CryptoException e) {
+    // Identity creation, key generation, or encryption failed.
+}
 ```
+
+Note the payload is a `List<AltAccount>`, not the `AltsRuntime`. Compiled as
+`GettingStartedExample.createRepositories`.
 
 The policy lives on the manifest and is enforced at the single encrypt/decrypt choke point, on both write
 and read. Know what that does and does not buy you:
@@ -207,8 +249,9 @@ if (stats != null) {
 }
 ```
 
-For tests and demos, the shipped `StaticGameStatsSource` returns fixed chips with no API call. See
-[../examples/](../examples/) for a compiled sample.
+For tests and demos, the shipped `StaticGameStatsSource` returns fixed chips with no API call. The
+source above is compiled as [`ExampleNetGameStatsSource`](../examples/ExampleNetGameStatsSource.java)
+and the read-back as `GettingStartedExample.readGameStats`; see [../examples/](../examples/).
 
 ## Persistence and encryption
 
