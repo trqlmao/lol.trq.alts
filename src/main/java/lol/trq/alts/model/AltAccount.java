@@ -43,8 +43,9 @@ import java.util.stream.Collectors;
  * @param sourceClient the client (mod) the alt was added from, or {@code null} when unattributed
  * @param sourceUser the user within {@code sourceClient} that added the alt, or {@code null}
  * @param refreshToken the OAuth refresh token used to renew the session, or {@code null} when the
- *     account has none (cookie, session, and offline accounts never do)
- * @param expiresAt the epoch-millis expiry of {@code accessToken}, or {@code 0} when unknown
+ *     account has none (cookie, session, and offline accounts never do); added in 0.6.0
+ * @param expiresAt the epoch-millis expiry of {@code accessToken}, or {@code 0} when unknown; added in
+ *     0.6.0
  * @author trq
  * @since 0.1.0
  */
@@ -277,6 +278,7 @@ public record AltAccount(
      * disk. Identity and state stay readable, because that is what a log is for.
      *
      * @return a loggable description carrying no credential
+     * @since 0.6.0
      */
     @Override
     public String toString() {

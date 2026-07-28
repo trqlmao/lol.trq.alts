@@ -14,7 +14,7 @@ import lol.trq.alts.crypto.VaultIdentity;
  * @param payloadVersion the payload version this context is synced to
  * @param shareRefreshTokens whether this repository's manifest permits sharing OAuth refresh tokens;
  *     mirrors {@link lol.trq.alts.vault.transport.VaultManifest#shareRefreshTokens()} so the policy is
- *     enforced locally on every read and write
+ *     enforced locally on every read and write; added in 0.6.0
  * @author trq
  * @since 0.2.0
  */

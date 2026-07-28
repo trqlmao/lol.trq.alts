@@ -21,6 +21,8 @@ public final class TokenExpiry {
     /**
      * How far ahead of the real expiry a token is considered spent, so a session that would lapse
      * during the handshake is renewed first.
+     *
+     * @since 0.6.0
      */
     public static final long SKEW_MILLIS = 60_000L;
 
@@ -31,6 +33,7 @@ public final class TokenExpiry {
      *
      * @param token the access token, which may be null, empty, opaque, or malformed
      * @return the expiry in epoch millis, or {@code 0} when the token carries no readable claim
+     * @since 0.6.0
      */
     public static long jwtExpiryMillis(String token) {
         if (token == null || !token.startsWith("eyJ")) {
@@ -56,6 +59,7 @@ public final class TokenExpiry {
      * @param account the account to inspect
      * @param clock the clock to read the current time from
      * @return true if the token should be renewed before use
+     * @since 0.6.0
      */
     public static boolean isExpired(AltAccount account, Clock clock) {
         long expiry = account.expiresAt() > 0 ? account.expiresAt() : jwtExpiryMillis(account.accessToken());

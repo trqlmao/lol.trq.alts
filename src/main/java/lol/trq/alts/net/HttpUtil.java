@@ -92,6 +92,7 @@ public final class HttpUtil {
          * Returns whether the status is in the 2xx success range.
          *
          * @return true if the request succeeded
+         * @since 0.6.0
          */
         public boolean successful() {
             return status >= 200 && status < 300;

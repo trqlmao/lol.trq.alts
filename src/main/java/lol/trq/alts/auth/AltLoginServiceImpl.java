@@ -162,6 +162,7 @@ public class AltLoginServiceImpl implements AltLoginService {
      * @param refreshToken the OAuth refresh token to redeem
      * @param mode the login mode
      * @return a future containing the result of the login attempt
+     * @since 0.6.0
      */
     @Override
     public CompletableFuture<AltLoginCallback.LoginResult> loginRefreshToken(String refreshToken, LoginMode mode) {

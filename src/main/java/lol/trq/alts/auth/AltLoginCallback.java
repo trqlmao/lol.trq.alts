@@ -55,7 +55,7 @@ public interface AltLoginCallback {
      * @param success whether the authentication was successful
      * @param message a descriptive message (success notification or error reason)
      * @param account the authenticated account object, or null if the attempt failed
-     * @param reason the machine-readable cause, {@link FailureReason#NONE} on success
+     * @param reason the machine-readable cause, {@link FailureReason#NONE} on success; added in 0.6.0
      * @author trq
      * @since 0.1.0
      */

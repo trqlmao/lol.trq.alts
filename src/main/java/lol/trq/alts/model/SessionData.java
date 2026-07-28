@@ -19,6 +19,7 @@ public record SessionData(String username, String uuid, String accessToken, Acco
      * was handed does not write a live credential to disk.
      *
      * @return a loggable description carrying no credential
+     * @since 0.6.0
      */
     @Override
     public String toString() {

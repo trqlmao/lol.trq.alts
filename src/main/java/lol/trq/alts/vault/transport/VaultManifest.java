@@ -17,7 +17,7 @@ import java.util.Objects;
  * @param members the member roster
  * @param shareRefreshTokens whether members may share OAuth refresh tokens through this repository;
  *     {@code false} by default, because a refresh token grants durable account access rather than the
- *     roughly one day an access token buys
+ *     roughly one day an access token buys; added in 0.6.0
  * @author trq
  * @since 0.2.0
  */

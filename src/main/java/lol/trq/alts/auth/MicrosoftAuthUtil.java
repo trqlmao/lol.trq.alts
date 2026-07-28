@@ -399,6 +399,7 @@ public final class MicrosoftAuthUtil {
          * Returns whether the refresh token is permanently spent and must be discarded.
          *
          * @return true if the token will never succeed again
+         * @since 0.6.0
          */
         public boolean permanent() {
             return permanent;
