@@ -32,7 +32,7 @@ class SharedVaultTest {
     private static List<AltAccount> alts(String name) {
         // Fixed lastUsed so value-equality round-trips are deterministic.
         return List.of(new AltAccount(
-                "uuid-" + name, name, "token-" + name, AccountType.MICROSOFT, 1000L, null, null, null, null));
+                "uuid-" + name, name, "token-" + name, AccountType.MICROSOFT, 1000L, null, null, null, null, null, 0L));
     }
 
     @Test
@@ -106,7 +106,9 @@ class SharedVaultTest {
                 "member-alice",
                 Map.of("hypixel", new BanInfo(true, 9000L, "self", "Watchdog", "member-bob")),
                 null,
-                null);
+                null,
+                null,
+                0L);
 
         SharedVault.CreatedRepo created = vault.createRepo(alice, List.of(banned));
         AltAccount recovered =
@@ -125,7 +127,7 @@ class SharedVaultTest {
     void sharesProvenanceFields() throws Exception {
         VaultIdentity alice = VaultIdentity.create("a".toCharArray());
         AltAccount sampleAlt = new AltAccount(
-                "u-prov", "ProvAlt", "tok", AccountType.MICROSOFT, 1000L, null, null, "democlient", "user1");
+                "u-prov", "ProvAlt", "tok", AccountType.MICROSOFT, 1000L, null, null, "democlient", "user1", null, 0L);
 
         SharedVault.CreatedRepo created = vault.createRepo(alice, List.of(sampleAlt));
         AltAccount recovered =

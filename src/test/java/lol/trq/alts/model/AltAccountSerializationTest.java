@@ -75,7 +75,8 @@ class AltAccountSerializationTest {
 
     @Test
     void usedNowKeepsIdentityFieldsAndAdvancesTimestamp() {
-        AltAccount base = new AltAccount("u", "Notch", "t", AccountType.OFFLINE, 1L, null, null, "democlient", "user1");
+        AltAccount base =
+                new AltAccount("u", "Steve", "t", AccountType.OFFLINE, 1L, null, null, "democlient", "user1", null, 0L);
         AltAccount stamped = base.usedNow();
 
         assertEquals(base.uuid(), stamped.uuid());
@@ -117,5 +118,55 @@ class AltAccountSerializationTest {
         assertFalse(cleared.banned("hypixel"));
         assertTrue(cleared.banned("cubecraft"));
         assertTrue(cleared.banned(), "still banned somewhere");
+    }
+
+    @Test
+    void tokenFieldsDefaultToAbsentOnLegacyPayloads() {
+        String legacy =
+                "{\"uuid\":\"u\",\"username\":\"Steve\",\"accessToken\":\"tok\",\"type\":\"MICROSOFT\",\"lastUsed\":1}";
+
+        AltAccount account = gson.fromJson(legacy, AltAccount.class);
+
+        assertNull(account.refreshToken(), "legacy files predate the refreshToken field");
+        assertEquals(0L, account.expiresAt(), "legacy files predate the expiresAt field");
+        assertFalse(account.hasRefreshToken());
+    }
+
+    @Test
+    void withTokensReplacesCredentialsAndPreservesEverythingElse() {
+        AltAccount base = AltAccount.of("u", "Alex", "old-access", AccountType.MICROSOFT)
+                .withSource("democlient", "user1")
+                .withBan("hypixel", BanInfo.observed("self", "x"));
+
+        AltAccount renewed = base.withTokens("new-access", "new-refresh", 1717000000000L);
+
+        assertEquals("new-access", renewed.accessToken());
+        assertEquals("new-refresh", renewed.refreshToken());
+        assertEquals(1717000000000L, renewed.expiresAt());
+        assertTrue(renewed.hasRefreshToken());
+        assertEquals("democlient", renewed.sourceClient(), "withTokens preserves provenance");
+        assertEquals("user1", renewed.sourceUser(), "withTokens preserves provenance");
+        assertTrue(renewed.banned("hypixel"), "withTokens preserves bans");
+        assertEquals(base.lastUsed(), renewed.lastUsed(), "withTokens does not restamp last-used");
+    }
+
+    @Test
+    void tokenFieldsRoundTripThroughGson() {
+        AltAccount original =
+                AltAccount.of("u", "Alex", "access", AccountType.MICROSOFT).withTokens("access", "refresh", 42L);
+
+        AltAccount restored = gson.fromJson(gson.toJson(original), AltAccount.class);
+
+        assertEquals(original, restored);
+        assertEquals("refresh", restored.refreshToken());
+        assertEquals(42L, restored.expiresAt());
+    }
+
+    @Test
+    void hasRefreshTokenRejectsBlankValues() {
+        AltAccount blank =
+                AltAccount.of("u", "Alex", "access", AccountType.MICROSOFT).withTokens("access", "  ", 0L);
+
+        assertFalse(blank.hasRefreshToken(), "a blank token is not usable for renewal");
     }
 }

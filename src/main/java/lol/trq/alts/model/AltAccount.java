@@ -27,6 +27,11 @@ import java.util.stream.Collectors;
  * purely local or unattributed account, and they ride inside the encrypted repo payload only (the sync
  * server never sees them), preserving the zero-knowledge guarantee.
  *
+ * <p>{@code refreshToken} and {@code expiresAt} back silent session renewal. The refresh token is a
+ * durable credential — far longer-lived than the access token — so it is stripped from a shared
+ * repository payload unless that repository has explicitly opted in. {@code expiresAt} is epoch millis
+ * and {@code 0} means "unknown", which callers read as "assume expired and renew".
+ *
  * @param uuid the unique identifier of the Minecraft player
  * @param username the last known display name of the account
  * @param accessToken the sensitive authentication token (OAuth, session, or cookie derived)
@@ -37,6 +42,9 @@ import java.util.stream.Collectors;
  * @param bans locally-observed ban records keyed by server id, or {@code null} if never observed banned
  * @param sourceClient the client (mod) the alt was added from, or {@code null} when unattributed
  * @param sourceUser the user within {@code sourceClient} that added the alt, or {@code null}
+ * @param refreshToken the OAuth refresh token used to renew the session, or {@code null} when the
+ *     account has none (cookie, session, and offline accounts never do)
+ * @param expiresAt the epoch-millis expiry of {@code accessToken}, or {@code 0} when unknown
  * @author trq
  * @since 0.1.0
  */
@@ -49,7 +57,9 @@ public record AltAccount(
         @SerializedName("lastUsedBy") String lastUsedBy,
         @SerializedName("bans") Map<String, BanInfo> bans,
         @SerializedName("sourceClient") String sourceClient,
-        @SerializedName("sourceUser") String sourceUser) {
+        @SerializedName("sourceUser") String sourceUser,
+        @SerializedName("refreshToken") String refreshToken,
+        @SerializedName("expiresAt") long expiresAt) {
 
     /**
      * Creates a freshly authenticated account stamped as used at the current system time, unattributed.
@@ -61,7 +71,8 @@ public record AltAccount(
      * @return a new account with {@code lastUsed} set to now
      */
     public static AltAccount of(String uuid, String username, String accessToken, AccountType type) {
-        return new AltAccount(uuid, username, accessToken, type, System.currentTimeMillis(), null, null, null, null);
+        return new AltAccount(
+                uuid, username, accessToken, type, System.currentTimeMillis(), null, null, null, null, null, 0L);
     }
 
     /**
@@ -80,7 +91,9 @@ public record AltAccount(
                 lastUsedBy,
                 bans,
                 sourceClient,
-                sourceUser);
+                sourceUser,
+                refreshToken,
+                expiresAt);
     }
 
     /**
@@ -100,7 +113,9 @@ public record AltAccount(
                 byMember,
                 bans,
                 sourceClient,
-                sourceUser);
+                sourceUser,
+                refreshToken,
+                expiresAt);
     }
 
     /**
@@ -119,7 +134,17 @@ public record AltAccount(
             updated.put(serverId, ban);
         }
         return new AltAccount(
-                uuid, username, accessToken, type, lastUsed, lastUsedBy, updated, sourceClient, sourceUser);
+                uuid,
+                username,
+                accessToken,
+                type,
+                lastUsed,
+                lastUsedBy,
+                updated,
+                sourceClient,
+                sourceUser,
+                refreshToken,
+                expiresAt);
     }
 
     /**
@@ -131,7 +156,53 @@ public record AltAccount(
      * @return a copy carrying the given provenance
      */
     public AltAccount withSource(String sourceClient, String sourceUser) {
-        return new AltAccount(uuid, username, accessToken, type, lastUsed, lastUsedBy, bans, sourceClient, sourceUser);
+        return new AltAccount(
+                uuid,
+                username,
+                accessToken,
+                type,
+                lastUsed,
+                lastUsedBy,
+                bans,
+                sourceClient,
+                sourceUser,
+                refreshToken,
+                expiresAt);
+    }
+
+    /**
+     * Returns a copy of this account carrying freshly issued credentials, preserving attribution, bans,
+     * and provenance. Used by the renewal path, which must persist the rotated refresh token.
+     *
+     * @param accessToken the newly issued access token
+     * @param refreshToken the newly issued refresh token, or {@code null} to clear it
+     * @param expiresAt the epoch-millis expiry of {@code accessToken}, or {@code 0} when unknown
+     * @return a copy carrying the given credentials
+     * @since 0.6.0
+     */
+    public AltAccount withTokens(String accessToken, String refreshToken, long expiresAt) {
+        return new AltAccount(
+                uuid,
+                username,
+                accessToken,
+                type,
+                lastUsed,
+                lastUsedBy,
+                bans,
+                sourceClient,
+                sourceUser,
+                refreshToken,
+                expiresAt);
+    }
+
+    /**
+     * Returns whether this account carries a usable refresh token.
+     *
+     * @return true if a non-blank refresh token is present
+     * @since 0.6.0
+     */
+    public boolean hasRefreshToken() {
+        return refreshToken != null && !refreshToken.isBlank();
     }
 
     /**

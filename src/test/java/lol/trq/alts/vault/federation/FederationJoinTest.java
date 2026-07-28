@@ -54,8 +54,8 @@ class FederationJoinTest {
         VaultIdentity bob = VaultIdentity.create("bob".toCharArray());
 
         // Alice, on one server, creates a repo holding an alt with provenance set.
-        AltAccount alt =
-                new AltAccount("u", "Shared", "tok", AccountType.MICROSOFT, 1000L, null, null, "democlient", "user1");
+        AltAccount alt = new AltAccount(
+                "u", "Shared", "tok", AccountType.MICROSOFT, 1000L, null, null, "democlient", "user1", null, 0L);
         SharedVault.CreatedRepo created = vault.createRepo(alice, List.of(alt));
         RepoAddress repoAddress =
                 new RepoAddress("vault.example", created.manifest().repoId());
