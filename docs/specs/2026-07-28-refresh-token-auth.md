@@ -229,12 +229,24 @@ repository:
   that serves it. This one is a genuine addition to the threat model rather than a
   field, and it is what the section above defers.
 
-Both are additive and optional, so an implementation that ignores them stays
-conformant — a minor version bump. The AVP conformance vectors under
-`src/test/resources/avp-vectors/` cover crypto constructions, not payload field
-sets, so they are unaffected. That spec change belongs to the AVP repository and
-is independent of this library, precisely because neither field is required to
-interoperate.
+The conformance vectors under `src/test/resources/avp-vectors/` cover crypto
+constructions rather than field sets, so they are unaffected.
+
+The fields are **not** silently additive, however. AVP's JSON Schema declares
+`additionalProperties: false` on both the manifest and the account object, so a
+validator running the 0.3 schema rejects all three fields outright rather than
+tolerating them. The spec bump is therefore a prerequisite for interoperation, not
+a bookkeeping follow-up: until it lands, a conformant 0.3 peer refuses what this
+version sends.
+
+Servers that store the manifest as a structured record rather than an opaque
+document need a matching field, and the failure mode when they lack one is quiet.
+A server whose deserializer drops unknown keys answers 200 while discarding the
+policy; the next `openRepo` then reads an absent boolean as `false`, and every
+refresh token is stripped from that point on. The repository owner sees a
+successful write and a silently withholding repository. Any server implementing
+this protocol must persist and return `shareRefreshTokens` before a repository can
+be opted in.
 
 ## Testing
 
