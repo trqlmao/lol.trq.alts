@@ -124,6 +124,30 @@ class RefreshLoginRouteTest {
     }
 
     @Test
+    void reimportingARefreshTokenMergesOntoTheStoredRecord() throws Exception {
+        AltAccount stored = AltAccount.of(UUID, "Alex", "old-access", AccountType.MICROSOFT)
+                .withTokens("old-access", "old-refresh", NOW - 1)
+                .withBan("serverone", BanInfo.observed("self", "x"))
+                .withSource("democlient", "user1");
+        AltStoreTestSupport.seed(stored);
+
+        LoginResult result =
+                service().loginRefreshToken("original", LoginMode.ADD).get();
+
+        assertTrue(result.success(), result.message());
+        assertEquals("rotated", result.account().refreshToken());
+        assertTrue(result.account().banned("serverone"), "the installed record must keep what the store knew");
+        assertEquals("democlient", result.account().sourceClient(), "the installed record must keep its provenance");
+
+        AltAccount persisted = AltStoreTestSupport.reloadFromDiskAndFind(UUID);
+        assertEquals("rotated", persisted.refreshToken(), "the imported credential must land");
+        assertEquals("mc-access", persisted.accessToken());
+        assertTrue(persisted.banned("serverone"), "re-importing an alt must not wipe observed bans");
+        assertEquals("democlient", persisted.sourceClient(), "re-importing an alt must not wipe provenance");
+        assertEquals("user1", persisted.sourceUser(), "re-importing an alt must not wipe provenance");
+    }
+
+    @Test
     void refreshRouteRequiresConfiguration() throws Exception {
         AltLoginServiceImpl unconfigured =
                 new AltLoginServiceImpl(injected::set, null, Clock.fixed(Instant.ofEpochMilli(NOW), ZoneOffset.UTC));

@@ -196,6 +196,36 @@ public record AltAccount(
     }
 
     /**
+     * Returns this account's identity and credentials applied onto a record the store already holds, so
+     * re-authenticating an alt refreshes what it logs in with without discarding what the store learned
+     * about it. Bans, provenance, and shared attribution come from {@code existing} unless this account
+     * carries its own, and a route that issues no refresh token leaves the stored one in place rather
+     * than clearing it. {@code expiresAt} is always this account's, because it describes this account's
+     * access token.
+     *
+     * @param existing the stored record for the same UUID, or {@code null} when the store holds none
+     * @return this account merged onto {@code existing}, or this account unchanged when there is none
+     * @since 0.6.0
+     */
+    public AltAccount mergedOnto(AltAccount existing) {
+        if (existing == null) {
+            return this;
+        }
+        return new AltAccount(
+                uuid,
+                username,
+                accessToken,
+                type,
+                lastUsed,
+                lastUsedBy != null ? lastUsedBy : existing.lastUsedBy(),
+                bans != null && !bans.isEmpty() ? bans : existing.bans(),
+                sourceClient != null ? sourceClient : existing.sourceClient(),
+                sourceUser != null ? sourceUser : existing.sourceUser(),
+                refreshToken != null ? refreshToken : existing.refreshToken(),
+                expiresAt);
+    }
+
+    /**
      * Returns whether this account carries a usable refresh token.
      *
      * @return true if a non-blank refresh token is present

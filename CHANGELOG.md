@@ -57,6 +57,20 @@ session silently, and shareable into a repository only when that repository opts
 
 ### Fixed
 
+- **Logging into a stored account no longer strips it.** `loginAccount` routed any account it could not
+  renew — one carrying no refresh token, or any account at all when Microsoft login is unconfigured —
+  through the session route, which rebuilt the record as `AccountType.SESSION` with no refresh token and
+  then replaced the stored entry with that poorer copy. A non-offline account that is already stored is
+  now installed as it stands, so its type, refresh token, bans, and provenance survive the login.
+- **A rate-limited renewal no longer destroys the refresh token.** Redemption failures were classified as
+  permanent on any 4xx, so an HTTP 429 (throttling) or 408 (request timeout) deleted a perfectly good
+  credential, as did `invalid_client` / `invalid_scope`, which report a misconfigured host rather than a
+  spent token. Only a stated `invalid_grant` outside those statuses is permanent now; everything else is
+  transient and the credential is kept.
+- **Re-authenticating a stored alt no longer resets what the store knows about it.** `AltStore.addAccount`
+  replaced an existing same-UUID entry outright, so importing a refresh token for an alt the user already
+  had wiped its observed bans, provenance, and shared attribution. The incoming credentials are now merged
+  onto the stored record instead, via the new `AltAccount.mergedOnto(AltAccount)`.
 - **Expired tokens no longer report a successful login.** The fast JWT path read a token's name and UUID
   claims without ever inspecting `exp`, so an expired token reported success, installed a dead session, and
   failed later at the server with no useful diagnostic. It now falls through to validation or renewal.

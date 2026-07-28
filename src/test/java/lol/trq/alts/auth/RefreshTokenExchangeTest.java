@@ -62,6 +62,18 @@ class RefreshTokenExchangeTest {
                         base + "/mcprofile");
     }
 
+    /**
+     * Redeems a token against the configured endpoint and returns the rejection it failed with, so a
+     * classification assertion reads as one line.
+     */
+    private static MicrosoftAuthUtil.RefreshRejectedException rejectionFor(MicrosoftAuthConfig config) {
+        ExecutionException thrown = assertThrows(
+                ExecutionException.class,
+                () -> MicrosoftAuthUtil.authenticateWithRefreshToken(config, "still-good")
+                        .get());
+        return assertInstanceOf(MicrosoftAuthUtil.RefreshRejectedException.class, thrown.getCause());
+    }
+
     private static void respond(HttpExchange exchange, int status, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.sendResponseHeaders(status, bytes.length);
@@ -120,6 +132,46 @@ class RefreshTokenExchangeTest {
         MicrosoftAuthUtil.RefreshRejectedException rejection =
                 assertInstanceOf(MicrosoftAuthUtil.RefreshRejectedException.class, thrown.getCause());
         assertTrue(rejection.permanent(), "a 4xx means the token will never work again");
+    }
+
+    @Test
+    void throttlingIsTransientEvenWhenTheBodyClaimsAnInvalidGrant() throws Exception {
+        tokenStatus = 429;
+        tokenBody = "{\"error\":\"invalid_grant\"}";
+        MicrosoftAuthConfig config = startServer();
+
+        assertFalse(
+                rejectionFor(config).permanent(),
+                "a rate limit is the service asking to wait, never a reason to destroy a credential");
+    }
+
+    @Test
+    void requestTimeoutIsTransient() throws Exception {
+        tokenStatus = 408;
+        tokenBody = "{\"error\":\"invalid_grant\"}";
+        MicrosoftAuthConfig config = startServer();
+
+        assertFalse(rejectionFor(config).permanent(), "a request timeout is retryable, not a spent token");
+    }
+
+    @Test
+    void hostMisconfigurationDoesNotDestroyTheCredential() throws Exception {
+        tokenStatus = 400;
+        tokenBody = "{\"error\":\"invalid_client\"}";
+        MicrosoftAuthConfig config = startServer();
+
+        assertFalse(
+                rejectionFor(config).permanent(),
+                "a wrong client id is the host's mistake; the user's refresh token is still good");
+    }
+
+    @Test
+    void anUnreadableClientErrorIsTransient() throws Exception {
+        tokenStatus = 400;
+        tokenBody = "not json at all";
+        MicrosoftAuthConfig config = startServer();
+
+        assertFalse(rejectionFor(config).permanent(), "only a stated invalid_grant proves the token is spent");
     }
 
     @Test

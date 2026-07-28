@@ -160,7 +160,8 @@ public final class MicrosoftAuthUtil {
 
     /**
      * Redeems a stored refresh token at the OAuth token endpoint, classifying a rejection as permanent
-     * (4xx) or transient (5xx, transport failure) so an outage never costs a working credential.
+     * only when the error body states {@code invalid_grant} (see {@link #tokenIsSpent}) so neither an
+     * outage, a rate limit, nor a host misconfiguration ever costs a working credential.
      *
      * @param config the host's Microsoft authentication configuration
      * @param refreshToken the stored refresh token to redeem
@@ -182,8 +183,8 @@ public final class MicrosoftAuthUtil {
             }
 
             if (!response.successful() || response.body() == null) {
-                boolean permanent = response.status() >= 400 && response.status() < 500;
-                throw new RefreshRejectedException("refresh rejected with status " + response.status(), permanent);
+                throw new RefreshRejectedException(
+                        "refresh rejected with status " + response.status(), tokenIsSpent(response));
             }
 
             JsonObject json = response.body();
@@ -192,6 +193,29 @@ public final class MicrosoftAuthUtil {
             long expiresIn = json.has("expires_in") ? json.get("expires_in").getAsLong() : 0L;
             return new MsTokens(json.get("access_token").getAsString(), rotated, expiresIn);
         });
+    }
+
+    /**
+     * Decides whether a rejected redemption proves the refresh token itself is spent. Only the OAuth
+     * {@code invalid_grant} error means that. A status alone never does: {@code 429} is the service
+     * throttling and {@code 408} is a timed-out request, both of which recur under perfectly normal
+     * load, and {@code invalid_client} / {@code invalid_scope} report a misconfigured host rather than a
+     * used-up credential. Reading any of those as permanent would delete a working token over a
+     * momentary condition, so everything short of a stated {@code invalid_grant} is transient.
+     *
+     * @param response the token endpoint's rejection
+     * @return true only if the token will never be redeemable again
+     */
+    private static boolean tokenIsSpent(HttpUtil.HttpResponse response) {
+        int status = response.status();
+        if (status < 400 || status >= 500 || status == 408 || status == 429) {
+            return false;
+        }
+        JsonObject body = response.body();
+        if (body == null || !body.has("error") || !body.get("error").isJsonPrimitive()) {
+            return false;
+        }
+        return "invalid_grant".equals(body.get("error").getAsString());
     }
 
     /**

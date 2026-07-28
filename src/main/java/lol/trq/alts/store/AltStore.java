@@ -162,14 +162,28 @@ public final class AltStore {
     }
 
     /**
-     * Adds an account to storage, replacing any existing account with the same UUID, then saves.
+     * Adds an account to storage, then saves. When an entry with the same UUID is already stored the
+     * incoming credentials are <em>merged onto</em> it (see {@link AltAccount#mergedOnto}) rather than
+     * replacing it, so re-authenticating an alt the user already saved refreshes its tokens without
+     * discarding the observed bans, provenance, and shared attribution the store had accumulated.
      *
      * @param account the account to add or update
      */
     public static void addAccount(AltAccount account) {
-        ACCOUNTS.removeIf(a -> a.uuid().equals(account.uuid()));
-        ACCOUNTS.add(account);
+        AltAccount merged = account.mergedOnto(stored(account.uuid()));
+        ACCOUNTS.removeIf(a -> a.uuid().equals(merged.uuid()));
+        ACCOUNTS.add(merged);
         save();
+    }
+
+    /**
+     * Returns the stored entry for {@code uuid}.
+     *
+     * @param uuid the dashed UUID to look up
+     * @return the stored account, or {@code null} when the store holds none for that UUID
+     */
+    private static AltAccount stored(String uuid) {
+        return ACCOUNTS.stream().filter(a -> a.uuid().equals(uuid)).findFirst().orElse(null);
     }
 
     /**

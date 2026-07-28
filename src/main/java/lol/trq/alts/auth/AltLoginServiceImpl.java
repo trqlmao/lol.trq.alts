@@ -191,7 +191,7 @@ public class AltLoginServiceImpl implements AltLoginService {
             return loginOffline(account.username(), LoginMode.DIRECT);
         }
         if (!account.hasRefreshToken() || microsoftAuth == null) {
-            return loginSession(account.accessToken(), LoginMode.DIRECT);
+            return useStoredWithoutRenewal(account);
         }
         if (TokenExpiry.isExpired(account, clock)) {
             return renew(account);
@@ -202,6 +202,22 @@ public class AltLoginServiceImpl implements AltLoginService {
             }
             return renew(account);
         });
+    }
+
+    /**
+     * Logs into a stored account that cannot be renewed — it carries no refresh token, or Microsoft
+     * login is not configured. A token still inside its lifetime is installed straight away, matching
+     * the session route's fast path; anything else is validated first. Either way the stored record is
+     * installed as it stands, so its type, refresh token, bans, and provenance survive a login that
+     * happens to be unrenewable.
+     *
+     * @param account the stored account to log into
+     * @return a future holding the outcome
+     */
+    private CompletableFuture<AltLoginCallback.LoginResult> useStoredWithoutRenewal(AltAccount account) {
+        return TokenExpiry.isExpired(account, clock)
+                ? useStored(account)
+                : CompletableFuture.supplyAsync(() -> inject(account));
     }
 
     /**
@@ -296,7 +312,10 @@ public class AltLoginServiceImpl implements AltLoginService {
     }
 
     /**
-     * Finalizes a flow that produced a brand-new account, carrying the issued credentials onto it.
+     * Finalizes a flow that produced a freshly authenticated account, carrying the issued credentials
+     * onto it. When the account is being saved and the store already holds the same alt, the issued
+     * credentials are merged onto the stored record, so importing a credential for an alt the user
+     * already has refreshes it instead of resetting its bans, provenance, and attribution.
      *
      * @param profile the resolved profile
      * @param type the type of account used
@@ -308,14 +327,30 @@ public class AltLoginServiceImpl implements AltLoginService {
                 .withTokens(profile.accessToken(), profile.refreshToken(), profile.expiresAt());
 
         if (mode == LoginMode.ADD) {
+            account = account.mergedOnto(storedRecord(account.uuid()));
             AltStore.addAccount(account);
         }
         return inject(account);
     }
 
     /**
+     * Returns the record the store holds for {@code uuid}, so a login can be merged onto it instead of
+     * replacing it.
+     *
+     * @param uuid the dashed UUID to look up
+     * @return the stored account, or {@code null} when the store holds none for that UUID
+     */
+    private static AltAccount storedRecord(String uuid) {
+        return AltStore.accounts().stream()
+                .filter(a -> a.uuid().equals(uuid))
+                .findFirst()
+                .orElse(null);
+    }
+
+    /**
      * Finalizes the login process by installing the resolved session through the host injector and
-     * updating local storage.
+     * updating local storage. As with the profile-based overload, saving merges onto the stored record
+     * for the same alt rather than replacing it.
      *
      * @param username the player's username
      * @param uuid the player's UUID string
@@ -329,6 +364,9 @@ public class AltLoginServiceImpl implements AltLoginService {
         try {
             String fmtUuid = formatUuid(uuid);
             AltAccount account = AltAccount.of(fmtUuid, username, token, type);
+            if (mode == LoginMode.ADD) {
+                account = account.mergedOnto(storedRecord(fmtUuid));
+            }
 
             sessionInjector.inject(
                     new SessionData(account.username(), account.uuid(), account.accessToken(), account.type()));
