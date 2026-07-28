@@ -269,4 +269,30 @@ public record AltAccount(
                 .map(Map.Entry::getKey)
                 .collect(Collectors.toUnmodifiableSet());
     }
+
+    /**
+     * Returns a description of this account with both credentials redacted. The record's generated
+     * {@code toString} would print the access and refresh tokens verbatim, so a host that logs an
+     * account — or anything embedding one, such as a login result — would write a durable credential to
+     * disk. Identity and state stay readable, because that is what a log is for.
+     *
+     * @return a loggable description carrying no credential
+     */
+    @Override
+    public String toString() {
+        return "AltAccount[uuid=" + uuid + ", username=" + username + ", accessToken=" + redacted(accessToken)
+                + ", type=" + type + ", lastUsed=" + lastUsed + ", lastUsedBy=" + lastUsedBy + ", bans=" + bans
+                + ", sourceClient=" + sourceClient + ", sourceUser=" + sourceUser + ", refreshToken="
+                + redacted(refreshToken) + ", expiresAt=" + expiresAt + "]";
+    }
+
+    /**
+     * Renders a credential as its presence alone.
+     *
+     * @param credential the secret to describe
+     * @return {@code "null"} when absent, and a fixed placeholder otherwise
+     */
+    private static String redacted(String credential) {
+        return credential == null ? "null" : "<redacted>";
+    }
 }

@@ -71,6 +71,11 @@ session silently, and shareable into a repository only when that repository opts
   replaced an existing same-UUID entry outright, so importing a refresh token for an alt the user already
   had wiped its observed bans, provenance, and shared attribution. The incoming credentials are now merged
   onto the stored record instead, via the new `AltAccount.mergedOnto(AltAccount)`.
+- **Records carrying credentials no longer print them.** `AltAccount`, `SessionData`, and
+  `MinecraftProfile` are records, so their generated `toString` emitted the access and refresh tokens
+  verbatim — and `LoginResult` embeds an `AltAccount`, so a host logging a login outcome wrote a durable
+  credential to its log file. All three now redact the token fields and keep the identity fields
+  readable.
 - **Every HTTP request now has a deadline.** Neither executor set a connect or read timeout, so an
   endpoint that accepted a connection and then went quiet held a common-pool thread for the life of the
   process and left the login future to never complete. Connections time out after 10s connecting and 30s
