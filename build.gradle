@@ -74,8 +74,9 @@ publishing {
             from components.java
             pom {
                 name = 'lol.trq.alts'
-                description = 'Consumer-agnostic Minecraft alt-manager core: Microsoft/cookie/session/offline auth, ' +
-                        'encrypted local store, and skin-avatar fetch/cache. No Minecraft, no renderer — host seams via SPI.'
+                description = 'Consumer-agnostic Minecraft alt-manager core: Microsoft/refresh-token/cookie/session/' +
+                        'offline auth with silent session renewal, an encrypted local store, a zero-knowledge shared ' +
+                        'alt vault, and skin-avatar fetch/cache. No Minecraft, no renderer — host seams via SPI.'
                 licenses {
                     license {
                         name = 'MIT License'
