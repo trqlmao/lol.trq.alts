@@ -166,12 +166,19 @@ The renewal path distinguishes the two:
 
 | Outcome | Stored refresh token | Reason |
 | --- | --- | --- |
-| 4xx from the token endpoint | cleared, persisted | `REAUTH_REQUIRED` |
+| 4xx carrying an `invalid_grant` error body | cleared, persisted | `REAUTH_REQUIRED` |
+| 408, 429, or any other 4xx | kept | `NETWORK` |
 | 5xx, timeout, or connection failure | kept | `NETWORK` |
 
 This requires status visibility. `HttpUtil` gains an additive surface — a
 `HttpResponse(int status, JsonObject body)` record and a status-returning form
 post — leaving the three existing methods untouched.
+
+Treating every 4xx as permanent was the first shape of this rule, and it was wrong
+in two ways that both cost the user their account: Microsoft answers 429 when it
+throttles, and 400 `invalid_client` or `invalid_scope` when the *host* is
+misconfigured. Neither means the token is spent. Only `invalid_grant` does, so only
+`invalid_grant` destroys a credential.
 
 ### Shared repositories
 
@@ -195,6 +202,16 @@ push refresh tokens into a repository whose policy forbids them, and every other
 member would silently accept and store them. Stripping on read makes the policy
 hold regardless of what any peer sends.
 
+**It does not hold against the manifest host.** The flag is served by the sync
+server, unsigned and unbound to the payload AAD, so a compromised server can flip
+it from false to true; clients that open the repository afterwards build a
+permissive context and upload refresh tokens on their next push, and the owner who
+deliberately left it off gets no signal. Closing that requires an authenticated
+manifest — an owner signature over `repoId`, `keyEpoch`, and the policy — plus
+local pinning so a false-to-true transition needs explicit confirmation. That is a
+protocol change, tracked with the AVP bump below and deliberately out of scope
+here. Until it lands, the policy binds members, not the host.
+
 Default false is deliberate. A Minecraft access token grants roughly a day of
 access; a refresh token grants durable access to the Microsoft account until it is
 revoked. Sharing one is a materially larger decision than sharing the other, and
@@ -208,6 +225,9 @@ repository:
 - `VaultManifest` gains optional `shareRefreshTokens` (boolean, default false).
 - The account payload gains optional `refreshToken` (string) and `expiresAt`
   (integer, epoch millis).
+- Manifest authentication, so the sharing policy cannot be rewritten by the host
+  that serves it. This one is a genuine addition to the threat model rather than a
+  field, and it is what the section above defers.
 
 Both are additive and optional, so an implementation that ignores them stays
 conformant — a minor version bump. The AVP conformance vectors under
