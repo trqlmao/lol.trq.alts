@@ -6,7 +6,8 @@ import lol.trq.alts.model.LoginMode;
 
 /**
  * Contract for Minecraft account authentication services. Provides asynchronous methods to log into
- * accounts via Microsoft OAuth, browser cookies, session tokens, or offline (cracked) identities.
+ * accounts via Microsoft OAuth, browser cookies, session tokens, refresh tokens, or offline (cracked)
+ * identities.
  *
  * @author trq
  * @since 0.1.0
@@ -39,6 +40,17 @@ public interface AltLoginService {
      * @return a future containing the result of the login attempt
      */
     CompletableFuture<AltLoginCallback.LoginResult> loginSession(String sessionToken, LoginMode mode);
+
+    /**
+     * Authenticates using a stored OAuth refresh token, skipping the interactive browser step. The
+     * token endpoint issues a rotated refresh token, which is stored on the resulting account.
+     *
+     * @param refreshToken the OAuth refresh token to redeem
+     * @param mode the login mode
+     * @return a future containing the result of the login attempt
+     * @since 0.6.0
+     */
+    CompletableFuture<AltLoginCallback.LoginResult> loginRefreshToken(String refreshToken, LoginMode mode);
 
     /**
      * Authenticates for offline (cracked) play using only a username.

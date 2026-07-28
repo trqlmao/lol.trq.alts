@@ -129,6 +129,39 @@ public final class AltStore {
     }
 
     /**
+     * Replaces the stored entry for {@code account}'s UUID with the given record and persists. Called
+     * after a renewal so the rotated refresh token survives a restart; without it the next process
+     * start would replay a token the authentication service has already invalidated. A no-op if the
+     * UUID is unknown, which is the case for an account that was never added to storage.
+     *
+     * @param account the account carrying freshly issued credentials
+     * @since 0.6.0
+     */
+    public static void updateCredentials(AltAccount account) {
+        ACCOUNTS.replaceAll(a -> a.uuid().equals(account.uuid()) ? account : a);
+        if (currentAccount != null && currentAccount.uuid().equals(account.uuid())) {
+            currentAccount = account;
+        }
+        save();
+    }
+
+    /**
+     * Discards the refresh token and expiry for the account with {@code uuid} and persists. Called when
+     * the authentication service permanently rejects the token, so a spent credential is not retried or
+     * left at rest. A no-op if the UUID is unknown.
+     *
+     * @param uuid the dashed UUID of the account whose refresh token is spent
+     * @since 0.6.0
+     */
+    public static void clearRefreshToken(String uuid) {
+        ACCOUNTS.replaceAll(a -> a.uuid().equals(uuid) ? a.withTokens(a.accessToken(), null, 0L) : a);
+        if (currentAccount != null && currentAccount.uuid().equals(uuid)) {
+            currentAccount = currentAccount.withTokens(currentAccount.accessToken(), null, 0L);
+        }
+        save();
+    }
+
+    /**
      * Adds an account to storage, replacing any existing account with the same UUID, then saves.
      *
      * @param account the account to add or update

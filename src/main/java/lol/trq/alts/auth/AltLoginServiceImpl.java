@@ -75,7 +75,7 @@ public class AltLoginServiceImpl implements AltLoginService {
 
             // Fallback: perform an API request to validate the token and get profile data
             try {
-                String[] profile = AccountNetworkUtil.fetchProfileFromToken(cleanToken);
+                String[] profile = AccountNetworkUtil.fetchProfileFromToken(cleanToken, profileUrl());
                 if (profile == null) throw new Exception("Invalid token or session expired");
                 return finalizeLogin(profile[0], profile[1], cleanToken, AccountType.SESSION, mode);
             } catch (Exception e) {
@@ -123,8 +123,7 @@ public class AltLoginServiceImpl implements AltLoginService {
                     "Microsoft login not configured", FailureReason.NOT_CONFIGURED));
         }
         return MicrosoftAuthUtil.authenticate(microsoftAuth)
-                .thenApply(profile -> finalizeLogin(
-                        profile.username(), profile.uuid(), profile.accessToken(), AccountType.MICROSOFT, mode))
+                .thenApply(profile -> finalizeLogin(profile, AccountType.MICROSOFT, mode))
                 .exceptionally(ex -> {
                     String msg = ex.getMessage();
                     if (ex.getCause() != null) msg = ex.getCause().getMessage();
@@ -158,7 +157,30 @@ public class AltLoginServiceImpl implements AltLoginService {
     }
 
     /**
-     * Authenticates into a pre-existing {@link AltAccount}.
+     * Authenticates using a stored OAuth refresh token, skipping the interactive browser step.
+     *
+     * @param refreshToken the OAuth refresh token to redeem
+     * @param mode the login mode
+     * @return a future containing the result of the login attempt
+     */
+    @Override
+    public CompletableFuture<AltLoginCallback.LoginResult> loginRefreshToken(String refreshToken, LoginMode mode) {
+        if (microsoftAuth == null) {
+            return CompletableFuture.completedFuture(AltLoginCallback.LoginResult.failure(
+                    "Microsoft login not configured", FailureReason.NOT_CONFIGURED));
+        }
+        if (refreshToken == null || refreshToken.isBlank()) {
+            return CompletableFuture.completedFuture(
+                    AltLoginCallback.LoginResult.failure("Refresh token empty", FailureReason.INVALID_TOKEN));
+        }
+        return MicrosoftAuthUtil.authenticateWithRefreshToken(microsoftAuth, refreshToken)
+                .thenApply(profile -> finalizeLogin(profile, AccountType.MICROSOFT, mode))
+                .exceptionally(ex -> refreshFailure(ex, null));
+    }
+
+    /**
+     * Authenticates into a pre-existing {@link AltAccount}, renewing the session first when its access
+     * token is spent and once more if the stored token turns out to be refused.
      *
      * @param account the account model to log into
      * @return a future containing the result of the login attempt
@@ -168,7 +190,127 @@ public class AltLoginServiceImpl implements AltLoginService {
         if (account.type() == AccountType.OFFLINE) {
             return loginOffline(account.username(), LoginMode.DIRECT);
         }
-        return loginSession(account.accessToken(), LoginMode.DIRECT);
+        if (!account.hasRefreshToken() || microsoftAuth == null) {
+            return loginSession(account.accessToken(), LoginMode.DIRECT);
+        }
+        if (TokenExpiry.isExpired(account, clock)) {
+            return renew(account);
+        }
+        return useStored(account).thenCompose(result -> {
+            if (result.success()) {
+                return CompletableFuture.completedFuture(result);
+            }
+            return renew(account);
+        });
+    }
+
+    /**
+     * Validates an account's stored access token and installs the stored record as-is, preserving its
+     * type, refresh token, bans, and provenance.
+     *
+     * @param account the stored account to use
+     * @return a future holding the outcome; a failure means the token was refused and renewal should run
+     */
+    private CompletableFuture<AltLoginCallback.LoginResult> useStored(AltAccount account) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                if (AccountNetworkUtil.fetchProfileFromToken(account.accessToken(), profileUrl()) == null) {
+                    return AltLoginCallback.LoginResult.failure("Stored token refused", FailureReason.INVALID_TOKEN);
+                }
+            } catch (Exception unreachable) {
+                return AltLoginCallback.LoginResult.failure(
+                        "Validation failed: " + unreachable.getMessage(), FailureReason.NETWORK);
+            }
+            return inject(account);
+        });
+    }
+
+    /**
+     * Renews an account from its stored refresh token, persisting the rotated credentials before
+     * installing the session. The renewed account is derived from the stored one, so bans, provenance,
+     * and shared attribution survive the renewal.
+     *
+     * @param account the stored account to renew
+     * @return a future holding the outcome
+     */
+    private CompletableFuture<AltLoginCallback.LoginResult> renew(AltAccount account) {
+        return MicrosoftAuthUtil.authenticateWithRefreshToken(microsoftAuth, account.refreshToken())
+                .thenApply(profile -> {
+                    AltAccount renewed =
+                            account.withTokens(profile.accessToken(), profile.refreshToken(), profile.expiresAt());
+                    AltStore.updateCredentials(renewed);
+                    return inject(renewed);
+                })
+                .exceptionally(ex -> refreshFailure(ex, account));
+    }
+
+    /**
+     * Installs an already-resolved account as the live session without rebuilding it.
+     *
+     * @param account the account to install
+     * @return the login result
+     */
+    private AltLoginCallback.LoginResult inject(AltAccount account) {
+        try {
+            sessionInjector.inject(
+                    new SessionData(account.username(), account.uuid(), account.accessToken(), account.type()));
+            AltStore.useAccount(account);
+            return AltLoginCallback.LoginResult.success(account);
+        } catch (Exception e) {
+            return AltLoginCallback.LoginResult.failure("Session Injection: " + e.getMessage(), FailureReason.UNKNOWN);
+        }
+    }
+
+    /**
+     * Returns the profile endpoint to validate against — the configured one when Microsoft login is
+     * wired up, and the public default otherwise.
+     *
+     * @return the Minecraft services profile endpoint
+     */
+    private String profileUrl() {
+        return microsoftAuth != null
+                ? microsoftAuth.minecraftProfileUrl()
+                : MicrosoftAuthConfig.DEFAULT_MINECRAFT_PROFILE_URL;
+    }
+
+    /**
+     * Maps a failed renewal onto a classified result, discarding the stored refresh token only when the
+     * rejection is permanent. A transient failure must never cost the user a working credential.
+     *
+     * @param ex the failure the renewal completed with
+     * @param account the stored account being renewed, or {@code null} for the import route
+     * @return the classified failure result
+     */
+    private AltLoginCallback.LoginResult refreshFailure(Throwable ex, AltAccount account) {
+        Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+        boolean permanent =
+                cause instanceof MicrosoftAuthUtil.RefreshRejectedException rejection && rejection.permanent();
+
+        if (permanent && account != null) {
+            AltStore.clearRefreshToken(account.uuid());
+        }
+
+        return AltLoginCallback.LoginResult.failure(
+                "Refresh: " + (cause.getMessage() != null ? cause.getMessage() : "unknown error"),
+                permanent ? FailureReason.REAUTH_REQUIRED : FailureReason.NETWORK);
+    }
+
+    /**
+     * Finalizes a flow that produced a brand-new account, carrying the issued credentials onto it.
+     *
+     * @param profile the resolved profile
+     * @param type the type of account used
+     * @param mode the login mode
+     * @return the login result
+     */
+    private AltLoginCallback.LoginResult finalizeLogin(MinecraftProfile profile, AccountType type, LoginMode mode) {
+        AltAccount account = AltAccount.of(formatUuid(profile.uuid()), profile.username(), profile.accessToken(), type)
+                .withTokens(profile.accessToken(), profile.refreshToken(), profile.expiresAt());
+
+        if (mode == LoginMode.ADD) {
+            AltStore.addAccount(account);
+        }
+        return inject(account);
     }
 
     /**
