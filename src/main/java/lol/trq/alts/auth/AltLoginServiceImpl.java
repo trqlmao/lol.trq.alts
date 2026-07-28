@@ -1,6 +1,7 @@
 package lol.trq.alts.auth;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.util.Base64;
 import java.util.Objects;
 import java.util.Optional;
@@ -29,6 +30,7 @@ public class AltLoginServiceImpl implements AltLoginService {
 
     private final SessionInjector sessionInjector;
     private final MicrosoftAuthConfig microsoftAuth;
+    private final Clock clock;
 
     /**
      * Creates a login service that installs resolved sessions through the given injector.
@@ -38,8 +40,14 @@ public class AltLoginServiceImpl implements AltLoginService {
      *     Microsoft login (offline / cookie / session login stay available)
      */
     public AltLoginServiceImpl(SessionInjector sessionInjector, MicrosoftAuthConfig microsoftAuth) {
+        this(sessionInjector, microsoftAuth, Clock.systemUTC());
+    }
+
+    // Exists so expiry-sensitive behaviour can be exercised against a fixed clock in tests.
+    AltLoginServiceImpl(SessionInjector sessionInjector, MicrosoftAuthConfig microsoftAuth, Clock clock) {
         this.sessionInjector = Objects.requireNonNull(sessionInjector, "sessionInjector");
         this.microsoftAuth = microsoftAuth;
+        this.clock = Objects.requireNonNull(clock, "clock");
     }
 
     /**
@@ -202,6 +210,11 @@ public class AltLoginServiceImpl implements AltLoginService {
      */
     private Optional<AltLoginCallback.LoginResult> attemptFastJwtLogin(String token, LoginMode mode) {
         try {
+            long expiry = TokenExpiry.jwtExpiryMillis(token);
+            if (expiry > 0 && clock.millis() >= expiry - TokenExpiry.SKEW_MILLIS) {
+                return Optional.empty();
+            }
+
             String payload = decodeJwtPayload(token);
             String uuid = extractRegex(payload, "\"(?:id|mc)\"\\s*:\\s*\"([a-fA-F0-9\\-]+)\"");
             String username = extractRegex(payload, "\"name\"\\s*:\\s*\"([^\"]+)\"");
