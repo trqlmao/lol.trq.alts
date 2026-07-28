@@ -1,8 +1,14 @@
 # Refresh-token authentication
 
-Status: approved, not implemented
+Status: shipped in 0.6.0
 Date: 2026-07-28
-Target release: 0.6.0 (breaking)
+Release: 0.6.0 (breaking)
+
+The design record for the refresh-token work, kept for its rationale: what each decision traded away
+and which alternatives were rejected. It describes the shape as designed, not as an API reference — for
+the shipped surface see [CHANGELOG.md](../../CHANGELOG.md) and
+[GETTING_STARTED.md](../GETTING_STARTED.md), and for the boundary the sharing policy does *not* cover,
+[ARCHITECTURE.md](../ARCHITECTURE.md).
 
 ## Problem
 
@@ -206,12 +212,14 @@ repository:
 Both are additive and optional, so an implementation that ignores them stays
 conformant — a minor version bump. The AVP conformance vectors under
 `src/test/resources/avp-vectors/` cover crypto constructions, not payload field
-sets, so they are unaffected. The spec change ships as separate work in the AVP
-repository and is tracked as a follow-up, not a blocker for this release.
+sets, so they are unaffected. That spec change belongs to the AVP repository and
+is independent of this library, precisely because neither field is required to
+interoperate.
 
 ## Testing
 
-New coverage, each testable without network access:
+Every behaviour the design introduces is exercisable without network access, which is why the clock is
+injected and every endpoint is configurable. The cases that matter:
 
 - **Refresh exchange.** A local `com.sun.net.httpserver.HttpServer` bound to a
   loopback port, with `MicrosoftAuthConfig.withEndpoints` pointing at it. Asserts
@@ -230,15 +238,6 @@ New coverage, each testable without network access:
 - **Vault strip.** With the flag false, an encrypted payload contains neither new
   field, and a payload that does contain them is stripped on decrypt. With the
   flag true, both survive a round trip.
-
-## Documentation
-
-- `README.md` — feature bullet, fifth route in the quick start.
-- `docs/ARCHITECTURE.md` — the `auth/` bullet says "four login methods"; update,
-  and note the manifest flag under the vault section.
-- `docs/GETTING_STARTED.md` — refresh-token route and the renewal behaviour.
-- `CHANGELOG.md` — 0.6.0 with the three breaking entries (`AltAccount`,
-  `LoginResult`, `VaultManifest`).
 
 ## Rejected alternatives
 
