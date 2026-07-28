@@ -8,6 +8,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import lol.trq.alts.auth.AltLoginCallback.FailureReason;
 import lol.trq.alts.model.AccountType;
 import lol.trq.alts.model.AltAccount;
 import lol.trq.alts.model.LoginMode;
@@ -53,7 +54,7 @@ public class AltLoginServiceImpl implements AltLoginService {
     public CompletableFuture<AltLoginCallback.LoginResult> loginSession(String sessionToken, LoginMode mode) {
         return CompletableFuture.supplyAsync(() -> {
             if (sessionToken == null || sessionToken.isBlank()) {
-                return AltLoginCallback.LoginResult.failure("Token empty");
+                return AltLoginCallback.LoginResult.failure("Token empty", FailureReason.INVALID_TOKEN);
             }
 
             String cleanToken = cleanToken(sessionToken);
@@ -70,7 +71,8 @@ public class AltLoginServiceImpl implements AltLoginService {
                 if (profile == null) throw new Exception("Invalid token or session expired");
                 return finalizeLogin(profile[0], profile[1], cleanToken, AccountType.SESSION, mode);
             } catch (Exception e) {
-                return AltLoginCallback.LoginResult.failure("Login failed: " + e.getMessage());
+                return AltLoginCallback.LoginResult.failure(
+                        "Login failed: " + e.getMessage(), FailureReason.INVALID_TOKEN);
             }
         });
     }
@@ -88,13 +90,14 @@ public class AltLoginServiceImpl implements AltLoginService {
             try {
                 String cleanName = name.trim().replaceAll("[^a-zA-Z0-9_]", "");
                 if (cleanName.isEmpty() || cleanName.length() > 16) {
-                    return AltLoginCallback.LoginResult.failure("Invalid username length (1-16 chars)");
+                    return AltLoginCallback.LoginResult.failure(
+                            "Invalid username length (1-16 chars)", FailureReason.INVALID_TOKEN);
                 }
 
                 UUID uuid = UUID.nameUUIDFromBytes(("OfflinePlayer:" + cleanName).getBytes(StandardCharsets.UTF_8));
                 return finalizeLogin(cleanName, uuid.toString(), "", AccountType.OFFLINE, mode);
             } catch (Exception e) {
-                return AltLoginCallback.LoginResult.failure("Error: " + e.getMessage());
+                return AltLoginCallback.LoginResult.failure("Error: " + e.getMessage(), FailureReason.UNKNOWN);
             }
         });
     }
@@ -108,8 +111,8 @@ public class AltLoginServiceImpl implements AltLoginService {
     @Override
     public CompletableFuture<AltLoginCallback.LoginResult> loginMicrosoft(LoginMode mode) {
         if (microsoftAuth == null) {
-            return CompletableFuture.completedFuture(
-                    AltLoginCallback.LoginResult.failure("Microsoft login not configured"));
+            return CompletableFuture.completedFuture(AltLoginCallback.LoginResult.failure(
+                    "Microsoft login not configured", FailureReason.NOT_CONFIGURED));
         }
         return MicrosoftAuthUtil.authenticate(microsoftAuth)
                 .thenApply(profile -> finalizeLogin(
@@ -117,7 +120,7 @@ public class AltLoginServiceImpl implements AltLoginService {
                 .exceptionally(ex -> {
                     String msg = ex.getMessage();
                     if (ex.getCause() != null) msg = ex.getCause().getMessage();
-                    return AltLoginCallback.LoginResult.failure("Microsoft Auth: " + msg);
+                    return AltLoginCallback.LoginResult.failure("Microsoft Auth: " + msg, FailureReason.UNKNOWN);
                 });
     }
 
@@ -133,14 +136,15 @@ public class AltLoginServiceImpl implements AltLoginService {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 if (cookieData == null || cookieData.isBlank())
-                    return AltLoginCallback.LoginResult.failure("Cookie data empty");
+                    return AltLoginCallback.LoginResult.failure("Cookie data empty", FailureReason.INVALID_TOKEN);
 
                 MinecraftProfile profile = CookieAuthUtil.authenticate(cookieData);
                 return finalizeLogin(
                         profile.username(), profile.uuid(), profile.accessToken(), AccountType.COOKIE, mode);
             } catch (Exception e) {
                 String msg = e.getMessage();
-                return AltLoginCallback.LoginResult.failure("Cookie Auth: " + (msg != null ? msg : "Unknown error"));
+                return AltLoginCallback.LoginResult.failure(
+                        "Cookie Auth: " + (msg != null ? msg : "Unknown error"), FailureReason.INVALID_TOKEN);
             }
         });
     }
@@ -184,7 +188,7 @@ public class AltLoginServiceImpl implements AltLoginService {
 
             return AltLoginCallback.LoginResult.success(account);
         } catch (Exception e) {
-            return AltLoginCallback.LoginResult.failure("Session Injection: " + e.getMessage());
+            return AltLoginCallback.LoginResult.failure("Session Injection: " + e.getMessage(), FailureReason.UNKNOWN);
         }
     }
 
