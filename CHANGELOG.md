@@ -71,6 +71,17 @@ session silently, and shareable into a repository only when that repository opts
   replaced an existing same-UUID entry outright, so importing a refresh token for an alt the user already
   had wiped its observed bans, provenance, and shared attribution. The incoming credentials are now merged
   onto the stored record instead, via the new `AltAccount.mergedOnto(AltAccount)`.
+- **Every HTTP request now has a deadline.** Neither executor set a connect or read timeout, so an
+  endpoint that accepted a connection and then went quiet held a common-pool thread for the life of the
+  process and left the login future to never complete. Connections time out after 10s connecting and 30s
+  reading.
+- **Redirects are no longer followed.** `HttpURLConnection` replays the caller's request properties to
+  the redirect target, so a `3xx` from a profile or token endpoint sent the `Authorization: Bearer`
+  header to whatever host the `Location` named. Redirect following is off on both executors; a `3xx` is
+  now reported to the caller like any other non-2xx.
+- **The Microsoft client id is URL-encoded** in both the authorization-code and refresh-token exchanges.
+  It was interpolated raw while every other parameter was encoded, so a client id containing `&` or `=`
+  injected extra form parameters into the token request.
 - **Expired tokens no longer report a successful login.** The fast JWT path read a token's name and UUID
   claims without ever inspecting `exp`, so an expired token reported success, installed a dead session, and
   failed later at the server with no useful diagnostic. It now falls through to validation or renewal.

@@ -21,7 +21,29 @@ import java.util.Map;
  */
 public final class HttpUtil {
 
+    /** How long to wait for the TCP connection before giving the request up. */
+    private static final int CONNECT_TIMEOUT_MILLIS = 10_000;
+
+    /** How long to wait for response bytes before giving the request up. */
+    private static final int READ_TIMEOUT_MILLIS = 30_000;
+
     private HttpUtil() {}
+
+    /**
+     * Applies the connection defaults every request shares. The timeouts are finite because these calls
+     * run on a shared thread pool: an endpoint that accepts a connection and then goes silent would
+     * otherwise hold a pooled thread for the life of the process and leave the login future to never
+     * complete. Redirects are not followed because {@code HttpURLConnection} replays the caller's
+     * request properties to the redirect target, which would send an {@code Authorization: Bearer}
+     * header to whatever host a {@code 3xx} names.
+     *
+     * @param conn the connection to configure
+     */
+    static void applyDefaults(HttpURLConnection conn) {
+        conn.setConnectTimeout(CONNECT_TIMEOUT_MILLIS);
+        conn.setReadTimeout(READ_TIMEOUT_MILLIS);
+        conn.setInstanceFollowRedirects(false);
+    }
 
     /**
      * Sends a POST request with a JSON body.
@@ -127,6 +149,7 @@ public final class HttpUtil {
         URL url = new URL(urlString);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod(method);
+        applyDefaults(conn);
 
         if (contentType != null) {
             conn.setRequestProperty("Content-Type", contentType);
@@ -164,6 +187,7 @@ public final class HttpUtil {
         URL url = new URL(urlString);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod(method);
+        applyDefaults(conn);
 
         if (contentType != null) {
             conn.setRequestProperty("Content-Type", contentType);

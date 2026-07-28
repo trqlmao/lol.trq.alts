@@ -12,12 +12,19 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 class RefreshTokenExchangeTest {
+
+    /** A client id that injects a second form parameter unless it is encoded. */
+    private static final String HOSTILE_CLIENT_ID = "id&grant_type=password";
+
+    private static final String ENCODED_HOSTILE_CLIENT_ID = "id%26grant_type%3Dpassword";
 
     private HttpServer server;
     private final AtomicReference<String> tokenRequestBody = new AtomicReference<>();
@@ -32,6 +39,10 @@ class RefreshTokenExchangeTest {
     }
 
     private MicrosoftAuthConfig startServer() throws IOException {
+        return startServer("test-client-id");
+    }
+
+    private MicrosoftAuthConfig startServer(String clientId) throws IOException {
         server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         server.createContext("/token", exchange -> {
             tokenRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
@@ -52,7 +63,7 @@ class RefreshTokenExchangeTest {
 
         String base = "http://" + InetAddress.getLoopbackAddress().getHostAddress() + ":"
                 + server.getAddress().getPort();
-        return MicrosoftAuthConfig.of("test-client-id")
+        return MicrosoftAuthConfig.of(clientId)
                 .withEndpoints(
                         base + "/authorize",
                         base + "/token",
@@ -60,6 +71,13 @@ class RefreshTokenExchangeTest {
                         base + "/xsts",
                         base + "/mclogin",
                         base + "/mcprofile");
+    }
+
+    /** Counts how many distinct {@code grant_type} parameters a form body actually declares. */
+    private static long grantTypeParameters(String formBody) {
+        return Arrays.stream(formBody.split("&"))
+                .filter(parameter -> parameter.startsWith("grant_type="))
+                .count();
     }
 
     /**
@@ -132,6 +150,31 @@ class RefreshTokenExchangeTest {
         MicrosoftAuthUtil.RefreshRejectedException rejection =
                 assertInstanceOf(MicrosoftAuthUtil.RefreshRejectedException.class, thrown.getCause());
         assertTrue(rejection.permanent(), "a 4xx means the token will never work again");
+    }
+
+    @Test
+    void theRefreshExchangeEncodesTheClientIdSoItCannotInjectFormParameters() throws Exception {
+        MicrosoftAuthConfig config = startServer(HOSTILE_CLIENT_ID);
+
+        MicrosoftAuthUtil.authenticateWithRefreshToken(config, "original-refresh")
+                .get();
+
+        String body = tokenRequestBody.get();
+        assertTrue(body.contains("client_id=" + ENCODED_HOSTILE_CLIENT_ID), "the client id must be encoded: " + body);
+        assertEquals(1, grantTypeParameters(body), "a client id must not smuggle in a second grant_type: " + body);
+    }
+
+    @Test
+    void theAuthorizationCodeExchangeEncodesTheClientIdToo() throws Exception {
+        MicrosoftAuthConfig config = startServer(HOSTILE_CLIENT_ID);
+
+        CompletableFuture<?> exchange =
+                MicrosoftAuthUtil.exchangeCodeForToken(config, "auth-code", "http://127.0.0.1/callback");
+        exchange.get();
+
+        String body = tokenRequestBody.get();
+        assertTrue(body.contains("client_id=" + ENCODED_HOSTILE_CLIENT_ID), "the client id must be encoded: " + body);
+        assertEquals(1, grantTypeParameters(body), "a client id must not smuggle in a second grant_type: " + body);
     }
 
     @Test

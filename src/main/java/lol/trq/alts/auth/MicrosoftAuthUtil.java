@@ -134,13 +134,13 @@ public final class MicrosoftAuthUtil {
      * @param redirectUri the URI where the code was received
      * @return a future containing the raw Microsoft tokens
      */
-    private static CompletableFuture<MsTokens> exchangeCodeForToken(
+    static CompletableFuture<MsTokens> exchangeCodeForToken(
             MicrosoftAuthConfig config, String code, String redirectUri) {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 String body = String.format(
                         "client_id=%s&code=%s&grant_type=authorization_code&redirect_uri=%s&scope=%s",
-                        config.clientId(),
+                        URLEncoder.encode(config.clientId(), StandardCharsets.UTF_8),
                         URLEncoder.encode(code, StandardCharsets.UTF_8),
                         URLEncoder.encode(redirectUri, StandardCharsets.UTF_8),
                         URLEncoder.encode(config.scope(), StandardCharsets.UTF_8));
@@ -174,7 +174,7 @@ public final class MicrosoftAuthUtil {
             try {
                 String body = String.format(
                         "client_id=%s&refresh_token=%s&grant_type=refresh_token&scope=%s",
-                        config.clientId(),
+                        URLEncoder.encode(config.clientId(), StandardCharsets.UTF_8),
                         URLEncoder.encode(refreshToken, StandardCharsets.UTF_8),
                         URLEncoder.encode(config.scope(), StandardCharsets.UTF_8));
                 response = HttpUtil.postFormForStatus(config.tokenUrl(), null, body);
