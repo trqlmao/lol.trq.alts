@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-07-28
+
+### Added
+
+- `AltsRuntime.Builder.vaultTransportResolver(VaultTransportResolver)` and the matching
+  `AltsRuntime.vaultTransportResolver()` accessor. The `VaultTransportResolver` SPI interface shipped in
+  an earlier release with no way to install one, so the seam was unreachable: a host could implement the
+  interface but never hand it to the runtime, leaving federated repositories (`avp://host/repoId`)
+  resolvable in principle and unusable in practice. The wiring existed only on an unmerged branch, which
+  consumers were pinning to directly. It now ships on the release line.
+
 ## [0.6.0] - 2026-07-28
 
 Refresh tokens become a first-class credential: importable as a login route, redeemable to renew a stored

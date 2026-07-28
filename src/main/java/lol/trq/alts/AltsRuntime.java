@@ -130,7 +130,7 @@ public final class AltsRuntime<H> {
      * {@link lol.trq.alts.vault.transport.VaultTransport} the host implements over its own network stack.
      *
      * @return the vault transport resolver, or null when unset
-     * @since 0.6.0
+     * @since 0.6.1
      */
     public VaultTransportResolver vaultTransportResolver() {
         return vaultResolver;
