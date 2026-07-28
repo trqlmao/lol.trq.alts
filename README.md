@@ -89,8 +89,18 @@ structured index of the docs in the [llmstxt.org](https://llmstxt.org) format, t
    obfuscation. Do not drop the annotations or switch to field-name reflection.
 4. **Microsoft login needs a host-supplied client id.** There is no built-in default; the host passes
    one through `MicrosoftAuthConfig`.
-5. **House style.** palantir-java-format (4-space, 120 column), full Javadoc on public and protected
-   members. Run `./gradlew spotlessApply` before committing, and `./gradlew build` (JDK 25) to test.
+5. **A refresh token is a durable credential, not another access token.** It renews a session for as
+   long as it is valid, so it is redacted from every `toString`, never persisted for an account the
+   store does not already hold, and withheld from a shared repository unless the manifest opts in.
+   Keep those three properties when touching `AltAccount`, `AltStore`, or `SharedVault`.
+6. **Branch on `AltLoginCallback.FailureReason`, never on the message.** Messages change under
+   obfuscation and localization; the reason is the contract.
+7. **House style.** palantir-java-format (4-space, 120 column), full Javadoc on public and protected
+   members with an `@since` on each new one. Run `./gradlew spotlessApply` before committing, and
+   `./gradlew build` (JDK 25) to test.
+8. **Documentation snippets are compiled.** Every Java block in
+   [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) is inlined from
+   [`examples/`](examples/), which `check` compiles. Change the example first, then the guide.
 
 The shared vault implements the [Alt Vault Protocol](https://github.com/trqlmao/avp); consult that
 spec for the wire contract and the fixed byte constructions (AAD, key binding).

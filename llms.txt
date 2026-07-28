@@ -1,21 +1,23 @@
 # lol.trq.alts
 
-> A consumer-agnostic Minecraft account-manager core for Fabric mods: Microsoft, cookie, session, and offline login; an encrypted local account store; async player-head and server-agnostic game-stats caches; a zero-knowledge shared alt vault; and a clean set of host SPI seams. Pure JDK plus Gson, with no Minecraft or renderer types of its own.
+> A consumer-agnostic Minecraft account-manager core for Fabric mods: Microsoft, OAuth refresh-token, cookie, session, and offline login, with silent renewal of a stored session from its refresh token; an encrypted local account store; async player-head and server-agnostic game-stats caches; a zero-knowledge shared alt vault; and a clean set of host SPI seams. Pure JDK plus Gson, with no Minecraft or renderer types of its own.
 
-The library is host-agnostic. A consuming mod supplies a handful of backend seams (session injection, storage directory, texture upload, main-thread executor, toasts, an optional stats source, and an optional Microsoft auth config) and wires one `AltsRuntime`. Microsoft login takes the host's own Azure client id; the library ships no default. The shared vault implements the Alt Vault Protocol (AVP), so repositories can be shared across clients.
+The library is host-agnostic. A consuming mod supplies a handful of backend seams (session injection, storage directory, texture upload, main-thread executor, toasts, an optional stats source, and an optional Microsoft auth config) and wires one `AltsRuntime`. Microsoft login takes the host's own Azure client id; the library ships no default. `AltLoginService` is the whole login surface: five routes (`loginMicrosoft`, `loginRefreshToken`, `loginCookie`, `loginSession`, `loginOffline`) plus `loginAccount`, which reuses a stored session while it is live and otherwise renews it from the account's refresh token without a browser round. Every outcome carries a typed `AltLoginCallback.FailureReason`, so a host branches on the cause rather than on a message string. The shared vault implements the Alt Vault Protocol (AVP), so repositories can be shared across clients; a refresh token is withheld from a repository unless its manifest opts in, because it grants durable account access rather than the day an access token buys.
 
-Notes for implementers: the library never imports a host type, and it must never name a specific consuming mod, client, product, or sponsor in source, docs, or commits. DTOs are Java records with a `@SerializedName` on every component so serialization survives obfuscation. House style is palantir-java-format (4-space, 120 column); run `./gradlew spotlessApply` before committing.
+Notes for implementers: the library never imports a host type, and it must never name a specific consuming mod, client, product, or sponsor in source, docs, or commits. DTOs are Java records with a `@SerializedName` on every component so serialization survives obfuscation, and the ones that carry credentials override `toString` to redact them — keep that when touching them. House style is palantir-java-format (4-space, 120 column); run `./gradlew spotlessApply` before committing. Every Java snippet in the getting-started guide is inlined from a compiled example, so change the example first and the guide second.
 
 ## Documentation
 
 - [README](https://raw.githubusercontent.com/trqlmao/lol.trq.alts/main/README.md): Overview, features, and quick start.
 - [Architecture](https://raw.githubusercontent.com/trqlmao/lol.trq.alts/main/docs/ARCHITECTURE.md): Layers, key pieces, and the vault and federation packages.
 - [Getting started](https://raw.githubusercontent.com/trqlmao/lol.trq.alts/main/docs/GETTING_STARTED.md): Wiring the seams and using the runtime.
+- [Examples](https://raw.githubusercontent.com/trqlmao/lol.trq.alts/main/examples/README.md): The compiled samples the guide inlines from.
+- [Refresh-token design](https://raw.githubusercontent.com/trqlmao/lol.trq.alts/main/docs/specs/2026-07-28-refresh-token-auth.md): Why renewal, the sharing policy, and the typed failure reason are shaped the way they are.
 - [Changelog](https://raw.githubusercontent.com/trqlmao/lol.trq.alts/main/CHANGELOG.md): Release history.
 
 ## Protocol
 
-- [Alt Vault Protocol (AVP)](https://raw.githubusercontent.com/trqlmao/avp-spec/main/SPEC.md): The vendor-neutral wire standard this library's shared vault implements.
+- [Alt Vault Protocol (AVP)](https://raw.githubusercontent.com/trqlmao/avp/main/SPEC.md): The vendor-neutral wire standard this library's shared vault implements.
 
 ## Project
 
