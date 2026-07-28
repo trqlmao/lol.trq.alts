@@ -1,8 +1,10 @@
 package lol.trq.alts.net;
 
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.BufferedReader;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -46,6 +48,48 @@ public final class HttpUtil {
      */
     public static JsonObject postForm(String urlString, Map<String, String> headers, String formBody) throws Exception {
         return executeRequest(
+                urlString,
+                "POST",
+                "application/x-www-form-urlencoded",
+                headers,
+                formBody.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * An HTTP response carrying its status alongside the parsed body, for callers that must
+     * distinguish a rejected request from a transient failure.
+     *
+     * @param status the HTTP status code
+     * @param body the parsed JSON body, or {@code null} when the body was absent or not JSON
+     * @author trq
+     * @since 0.6.0
+     */
+    public record HttpResponse(int status, JsonObject body) {
+
+        /**
+         * Returns whether the status is in the 2xx success range.
+         *
+         * @return true if the request succeeded
+         */
+        public boolean successful() {
+            return status >= 200 && status < 300;
+        }
+    }
+
+    /**
+     * Sends a POST request with an x-www-form-urlencoded body, returning the status alongside the
+     * parsed body so the caller can tell a rejection from an outage.
+     *
+     * @param urlString the target URL
+     * @param headers optional HTTP headers to include in the request
+     * @param formBody the form data payload as a string
+     * @return the status and parsed body; the body is null when absent or not JSON
+     * @throws Exception if a network or protocol error occurs
+     * @since 0.6.0
+     */
+    public static HttpResponse postFormForStatus(String urlString, Map<String, String> headers, String formBody)
+            throws Exception {
+        return executeForStatus(
                 urlString,
                 "POST",
                 "application/x-www-form-urlencoded",
@@ -111,6 +155,45 @@ public final class HttpUtil {
 
         try (BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
             return JsonParser.parseReader(br).getAsJsonObject();
+        }
+    }
+
+    private static HttpResponse executeForStatus(
+            String urlString, String method, String contentType, Map<String, String> headers, byte[] body)
+            throws Exception {
+        URL url = new URL(urlString);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod(method);
+
+        if (contentType != null) {
+            conn.setRequestProperty("Content-Type", contentType);
+        }
+
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+
+        if (headers != null) {
+            headers.forEach(conn::setRequestProperty);
+        }
+
+        if (body != null) {
+            conn.setDoOutput(true);
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(body);
+            }
+        }
+
+        int status = conn.getResponseCode();
+        InputStream stream = status >= 200 && status < 300 ? conn.getInputStream() : conn.getErrorStream();
+        if (stream == null) {
+            return new HttpResponse(status, null);
+        }
+
+        try (BufferedReader br = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+            JsonElement parsed = JsonParser.parseReader(br);
+            return new HttpResponse(status, parsed.isJsonObject() ? parsed.getAsJsonObject() : null);
+        } catch (Exception parseFailure) {
+            return new HttpResponse(status, null);
         }
     }
 }
