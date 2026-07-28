@@ -256,7 +256,7 @@ public final class CookieAuthUtil {
             uuid = uuid.replaceFirst(
                     "(\\p{XDigit}{8})(\\p{XDigit}{4})(\\p{XDigit}{4})(\\p{XDigit}{4})(\\p{XDigit}+)", "$1-$2-$3-$4-$5");
         }
-        return new MinecraftProfile(username, uuid, mcToken);
+        return new MinecraftProfile(username, uuid, mcToken, null, 0L);
     }
 
     /** Internal data structure for XSTS token information. */

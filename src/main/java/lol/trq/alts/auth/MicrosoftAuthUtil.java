@@ -41,11 +41,42 @@ public final class MicrosoftAuthUtil {
 
         return server.start()
                 .thenCompose(code -> exchangeCodeForToken(config, code, server.redirectUri()))
-                .thenCompose(tokens -> authenticateWithXboxLive(config, tokens))
+                .thenCompose(tokens -> completeFrom(config, tokens))
+                .whenComplete((profile, error) -> server.stop());
+    }
+
+    /**
+     * Renews a session from a stored OAuth refresh token, skipping the interactive browser step. The
+     * token endpoint issues a rotated refresh token on success; the returned profile carries it, and
+     * callers must persist it or the next renewal will fail.
+     *
+     * @param config the host's Microsoft authentication configuration (client id, scope, endpoints)
+     * @param refreshToken the stored refresh token to redeem
+     * @return a future containing the renewed {@link MinecraftProfile}
+     * @throws NullPointerException if {@code config} is null
+     * @since 0.6.0
+     */
+    public static CompletableFuture<MinecraftProfile> authenticateWithRefreshToken(
+            MicrosoftAuthConfig config, String refreshToken) {
+        Objects.requireNonNull(config, "config");
+        if (refreshToken == null || refreshToken.isBlank()) {
+            return CompletableFuture.failedFuture(new RefreshRejectedException("refresh token is blank", true));
+        }
+        return exchangeRefreshForToken(config, refreshToken).thenCompose(tokens -> completeFrom(config, tokens));
+    }
+
+    /**
+     * Runs the Xbox Live, XSTS, Minecraft services, and profile steps shared by both entry points.
+     *
+     * @param config the host's Microsoft authentication configuration
+     * @param tokens the Microsoft tokens produced by whichever first step ran
+     * @return a future containing the resolved profile
+     */
+    private static CompletableFuture<MinecraftProfile> completeFrom(MicrosoftAuthConfig config, MsTokens tokens) {
+        return authenticateWithXboxLive(config, tokens)
                 .thenCompose(xblToken -> authenticateWithXSTS(config, xblToken))
                 .thenCompose(xstsData -> authenticateWithMinecraft(config, xstsData))
-                .thenCompose(mcToken -> getMinecraftProfile(config, mcToken))
-                .whenComplete((profile, error) -> server.stop());
+                .thenCompose(session -> getMinecraftProfile(config, session, tokens));
     }
 
     /**
@@ -115,12 +146,51 @@ public final class MicrosoftAuthUtil {
                         URLEncoder.encode(config.scope(), StandardCharsets.UTF_8));
                 JsonObject response = HttpUtil.postForm(config.tokenUrl(), null, body);
                 if (response == null) throw new Exception("Token exchange failed");
+                long expiresIn =
+                        response.has("expires_in") ? response.get("expires_in").getAsLong() : 0L;
                 return new MsTokens(
                         response.get("access_token").getAsString(),
-                        response.get("refresh_token").getAsString());
+                        response.get("refresh_token").getAsString(),
+                        expiresIn);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
+        });
+    }
+
+    /**
+     * Redeems a stored refresh token at the OAuth token endpoint, classifying a rejection as permanent
+     * (4xx) or transient (5xx, transport failure) so an outage never costs a working credential.
+     *
+     * @param config the host's Microsoft authentication configuration
+     * @param refreshToken the stored refresh token to redeem
+     * @return a future containing the freshly issued Microsoft tokens
+     */
+    private static CompletableFuture<MsTokens> exchangeRefreshForToken(
+            MicrosoftAuthConfig config, String refreshToken) {
+        return CompletableFuture.supplyAsync(() -> {
+            HttpUtil.HttpResponse response;
+            try {
+                String body = String.format(
+                        "client_id=%s&refresh_token=%s&grant_type=refresh_token&scope=%s",
+                        config.clientId(),
+                        URLEncoder.encode(refreshToken, StandardCharsets.UTF_8),
+                        URLEncoder.encode(config.scope(), StandardCharsets.UTF_8));
+                response = HttpUtil.postFormForStatus(config.tokenUrl(), null, body);
+            } catch (Exception transportFailure) {
+                throw new RefreshRejectedException("refresh transport failure", false, transportFailure);
+            }
+
+            if (!response.successful() || response.body() == null) {
+                boolean permanent = response.status() >= 400 && response.status() < 500;
+                throw new RefreshRejectedException("refresh rejected with status " + response.status(), permanent);
+            }
+
+            JsonObject json = response.body();
+            String rotated =
+                    json.has("refresh_token") ? json.get("refresh_token").getAsString() : refreshToken;
+            long expiresIn = json.has("expires_in") ? json.get("expires_in").getAsLong() : 0L;
+            return new MsTokens(json.get("access_token").getAsString(), rotated, expiresIn);
         });
     }
 
@@ -194,16 +264,19 @@ public final class MicrosoftAuthUtil {
      *
      * @param config the host's Microsoft authentication configuration
      * @param xstsData the XSTS data from the previous step
-     * @return a future containing the Minecraft access token
+     * @return a future containing the Minecraft services session and its lifetime
      */
-    private static CompletableFuture<String> authenticateWithMinecraft(MicrosoftAuthConfig config, XstsData xstsData) {
+    private static CompletableFuture<McSession> authenticateWithMinecraft(
+            MicrosoftAuthConfig config, XstsData xstsData) {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 JsonObject body = new JsonObject();
                 body.addProperty("identityToken", "XBL3.0 x=" + xstsData.uhs() + ";" + xstsData.token());
                 JsonObject response = HttpUtil.postJson(config.minecraftLoginUrl(), null, body.toString());
                 if (response == null) throw new Exception("MC services auth failed");
-                return response.get("access_token").getAsString();
+                long expiresIn =
+                        response.has("expires_in") ? response.get("expires_in").getAsLong() : 0L;
+                return new McSession(response.get("access_token").getAsString(), expiresIn);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -214,15 +287,16 @@ public final class MicrosoftAuthUtil {
      * Step 5: retrieves the Minecraft profile information (username and UUID).
      *
      * @param config the host's Microsoft authentication configuration
-     * @param mcAccessToken the final Minecraft services token
+     * @param session the final Minecraft services session
+     * @param tokens the Microsoft tokens the flow started from
      * @return a future containing the populated profile
      */
     private static CompletableFuture<MinecraftProfile> getMinecraftProfile(
-            MicrosoftAuthConfig config, String mcAccessToken) {
+            MicrosoftAuthConfig config, McSession session, MsTokens tokens) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                JsonObject profile =
-                        HttpUtil.get(config.minecraftProfileUrl(), Map.of("Authorization", "Bearer " + mcAccessToken));
+                JsonObject profile = HttpUtil.get(
+                        config.minecraftProfileUrl(), Map.of("Authorization", "Bearer " + session.accessToken()));
 
                 if (profile == null) throw new Exception("Profile fetch failed");
 
@@ -234,15 +308,84 @@ public final class MicrosoftAuthUtil {
                             "(\\p{XDigit}{8})(\\p{XDigit}{4})(\\p{XDigit}{4})(\\p{XDigit}{4})(\\p{XDigit}+)",
                             "$1-$2-$3-$4-$5");
                 }
-                return new MinecraftProfile(username, uuid, mcAccessToken);
+                return new MinecraftProfile(
+                        username,
+                        uuid,
+                        session.accessToken(),
+                        tokens.refreshToken(),
+                        absoluteExpiry(session.expiresIn()));
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
         });
     }
 
-    /** Holds the Microsoft OAuth access and refresh tokens. */
-    private record MsTokens(String accessToken, String refreshToken) {}
+    /**
+     * Converts an advertised lifetime in seconds into an absolute epoch-millis expiry.
+     *
+     * @param expiresInSeconds the lifetime in seconds, or a non-positive value when unknown
+     * @return the absolute expiry, or {@code 0} when the lifetime was unknown
+     */
+    private static long absoluteExpiry(long expiresInSeconds) {
+        return expiresInSeconds <= 0 ? 0L : System.currentTimeMillis() + (expiresInSeconds * 1000L);
+    }
+
+    /**
+     * Signals that a refresh-token redemption failed, distinguishing a token that will never work
+     * again from a failure worth retrying.
+     *
+     * @author trq
+     * @since 0.6.0
+     */
+    public static final class RefreshRejectedException extends RuntimeException {
+
+        /**
+         * Whether the refresh token is permanently spent.
+         *
+         * @serial
+         */
+        private final boolean permanent;
+
+        /**
+         * Creates a rejection.
+         *
+         * @param message the failure description
+         * @param permanent whether the refresh token is permanently spent
+         * @since 0.6.0
+         */
+        public RefreshRejectedException(String message, boolean permanent) {
+            this(message, permanent, null);
+        }
+
+        /**
+         * Creates a rejection carrying the underlying failure, so a connection error keeps its
+         * diagnostic instead of being reported as a bare message.
+         *
+         * @param message the failure description
+         * @param permanent whether the refresh token is permanently spent
+         * @param cause the underlying failure, or {@code null}
+         * @since 0.6.0
+         */
+        public RefreshRejectedException(String message, boolean permanent, Throwable cause) {
+            super(message, cause);
+            this.permanent = permanent;
+        }
+
+        /**
+         * Returns whether the refresh token is permanently spent and must be discarded.
+         *
+         * @return true if the token will never succeed again
+         */
+        public boolean permanent() {
+            return permanent;
+        }
+    }
+
+    /** Holds the Microsoft OAuth access and refresh tokens together with the access token's lifetime. */
+    private record MsTokens(String accessToken, String refreshToken, long expiresIn) {}
+
+    /** Holds the Minecraft services session token and its advertised lifetime in seconds. */
+    private record McSession(String accessToken, long expiresIn) {}
 
     /** Holds XSTS authorization data. */
     private record XstsData(String token, String uhs) {}
