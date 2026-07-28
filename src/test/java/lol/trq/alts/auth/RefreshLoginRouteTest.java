@@ -121,6 +121,13 @@ class RefreshLoginRouteTest {
         assertEquals("rotated", result.account().refreshToken());
         assertEquals(AccountType.MICROSOFT, result.account().type());
         assertEquals("Alex", injected.get().username());
+
+        // LoginMode.ADD is a promise to save. Asserting only on the returned record would hold even if
+        // the route never wrote anything, which is the whole difference between ADD and DIRECT.
+        AltAccount persisted = AltStoreTestSupport.reloadFromDiskAndFind(UUID);
+        assertEquals("rotated", persisted.refreshToken(), "ADD must write the imported credential to the store");
+        assertEquals("mc-access", persisted.accessToken());
+        assertEquals(AccountType.MICROSOFT, persisted.type());
     }
 
     @Test
@@ -183,12 +190,49 @@ class RefreshLoginRouteTest {
         assertTrue(persisted.banned("serverone"), "renewal must preserve shared ban records");
         assertEquals("democlient", persisted.sourceClient(), "renewal must preserve provenance");
 
+        // The renewed session is a Minecraft token (~24h), reached through a Microsoft OAuth token (~1h).
+        // Stamping the OAuth lifetime would mark the account expired twenty-three hours early and make
+        // every subsequent login pay a renewal it does not need.
+        long stampedLifetime = persisted.expiresAt() - System.currentTimeMillis();
+        assertTrue(
+                stampedLifetime > 80_000_000L,
+                "the persisted expiry must describe the Minecraft session, not the OAuth token: " + stampedLifetime);
+        assertTrue(
+                stampedLifetime <= 86_400_000L,
+                "the persisted expiry must not exceed the advertised lifetime: " + stampedLifetime);
+
         // Installing the session only mutates the in-memory list, so the disk round-trip is what proves
         // the rotated token survives a restart rather than dying on the second renewal.
+        AltAccount reloaded = AltStoreTestSupport.reloadFromDiskAndFind(UUID);
         assertEquals(
                 "rotated",
-                AltStoreTestSupport.reloadFromDiskAndFind(UUID).refreshToken(),
+                reloaded.refreshToken(),
                 "the rotated token must be written to the store, not only held in memory");
+        assertEquals(persisted.expiresAt(), reloaded.expiresAt(), "the stamped expiry must survive a restart too");
+    }
+
+    @Test
+    void aFailingHostInjectorDoesNotSpendARefreshTokenRotation() throws Exception {
+        AltAccount stored = AltAccount.of(UUID, "Alex", "opaque-live", AccountType.MICROSOFT)
+                .withTokens("opaque-live", "stored-refresh", NOW + 3_600_000L);
+        AltStoreTestSupport.seed(stored);
+
+        AltLoginServiceImpl broken = new AltLoginServiceImpl(
+                session -> {
+                    throw new IllegalStateException("host injector broke");
+                },
+                config,
+                Clock.fixed(Instant.ofEpochMilli(NOW), ZoneOffset.UTC));
+
+        LoginResult result = broken.loginAccount(stored).get();
+
+        assertFalse(result.success());
+        assertEquals(FailureReason.UNKNOWN, result.reason(), "a broken injector is not a refused token");
+        assertEquals(0, tokenCalls.get(), "only a refused token may trigger a renewal");
+        assertEquals(
+                "stored-refresh",
+                AltStoreTestSupport.find(UUID).refreshToken(),
+                "a host-side failure must not spend the user's one rotation");
     }
 
     @Test

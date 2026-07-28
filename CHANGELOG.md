@@ -71,6 +71,11 @@ session silently, and shareable into a repository only when that repository opts
   replaced an existing same-UUID entry outright, so importing a refresh token for an alt the user already
   had wiped its observed bans, provenance, and shared attribution. The incoming credentials are now merged
   onto the stored record instead, via the new `AltAccount.mergedOnto(AltAccount)`.
+- **A host-side failure no longer spends a refresh-token rotation.** `loginAccount`'s reactive renewal
+  fired on any unsuccessful outcome from the stored-token attempt, including a `SessionInjector` that
+  threw and an unreachable service. Since the token endpoint rotates the refresh token on every
+  redemption, a broken injector cost the user a rotation on every attempt. Renewal is now gated on the
+  failure being `INVALID_TOKEN`.
 - **Records carrying credentials no longer print them.** `AltAccount`, `SessionData`, and
   `MinecraftProfile` are records, so their generated `toString` emitted the access and refresh tokens
   verbatim — and `LoginResult` embeds an `AltAccount`, so a host logging a login outcome wrote a durable

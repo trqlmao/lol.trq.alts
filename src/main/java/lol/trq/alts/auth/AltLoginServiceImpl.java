@@ -197,7 +197,10 @@ public class AltLoginServiceImpl implements AltLoginService {
             return renew(account);
         }
         return useStored(account).thenCompose(result -> {
-            if (result.success()) {
+            // Only a refused token is worth a renewal. An unreachable service or a host injector that
+            // threw says nothing about the credential, and Microsoft rotates the refresh token on every
+            // redemption, so renewing on those would spend a rotation to fix something else's fault.
+            if (result.success() || result.reason() != FailureReason.INVALID_TOKEN) {
                 return CompletableFuture.completedFuture(result);
             }
             return renew(account);
@@ -225,7 +228,8 @@ public class AltLoginServiceImpl implements AltLoginService {
      * type, refresh token, bans, and provenance.
      *
      * @param account the stored account to use
-     * @return a future holding the outcome; a failure means the token was refused and renewal should run
+     * @return a future holding the outcome; only an {@link FailureReason#INVALID_TOKEN} failure means the
+     *     token was refused and renewal should run
      */
     private CompletableFuture<AltLoginCallback.LoginResult> useStored(AltAccount account) {
         return CompletableFuture.supplyAsync(() -> {
