@@ -18,7 +18,10 @@
 - **Build gate:** `./gradlew build` (JDK 25) must pass — it runs `spotlessCheck` plus the tests.
 - **Conventional Commits.** `type(scope): summary`, lowercase after the colon, no trailing period, imperative mood. Breaking changes use `!` and a `BREAKING CHANGE:` footer. Never add a `Co-Authored-By` or any AI-attribution trailer.
 - **No secrets, no machine paths.** No API keys, tokens, or `C:\Users\...`-style paths in source, tests, or docs.
+- **No real people or companies in test data.** Use `Alex`, `Steve`, `democlient`, `serverone`. Existing tests that already use other values are left alone; only new or touched lines follow this.
 - **Tests must not touch the public internet.** Every network test binds `com.sun.net.httpserver.HttpServer` to `loopback:0` and points config at it.
+- **Commit blocks are PowerShell.** They use here-string syntax (`@'` … `'@`, closing delimiter at column 0). On a POSIX shell, substitute a heredoc or repeated `-m` flags.
+- **`@since 0.6.0` on every new public member**, including members added to a record or class whose type-level `@since` is older.
 
 ---
 
@@ -373,16 +376,20 @@ Add the new members:
     }
 ```
 
-- [ ] **Step 4: Fix the one existing direct constructor call**
+- [ ] **Step 4: Fix all five existing direct constructor calls**
 
-`AltAccountSerializationTest.usedNowKeepsIdentityFieldsAndAdvancesTimestamp` constructs the record positionally with 9 arguments. Extend it to 11:
+Widening the record breaks every positional construction. There are five, across three test files — `AltAccountSerializationTest:78`, `SharedVaultTest:34`, `SharedVaultTest:100`, `SharedVaultTest:127`, and `FederationJoinTest:58`. Each gains a trailing `, null, 0L`.
+
+In `AltAccountSerializationTest`, also drop the real-person name while touching the line:
 
 ```java
         AltAccount base = new AltAccount(
-                "u", "Notch", "t", AccountType.OFFLINE, 1L, null, null, "democlient", "user1", null, 0L);
+                "u", "Steve", "t", AccountType.OFFLINE, 1L, null, null, "democlient", "user1", null, 0L);
 ```
 
-Run `./gradlew compileJava compileTestJava` and fix any other positional construction the compiler flags the same way.
+The assertions in that test reference the username only through `base.username()`, so nothing else changes. Leave the other four files' assertions untouched — they only need the two extra arguments.
+
+Run `./gradlew compileJava compileTestJava` and fix anything else the compiler flags the same way.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -391,8 +398,8 @@ Expected: all PASS. The migration test is included because it exercises the stor
 
 - [ ] **Step 6: Commit**
 
-```bash
-git add src/main/java/lol/trq/alts/model/AltAccount.java src/test/java/lol/trq/alts/model/AltAccountSerializationTest.java
+```powershell
+git add src/main/java/lol/trq/alts/model/AltAccount.java src/test/java/lol/trq/alts/model/AltAccountSerializationTest.java src/test/java/lol/trq/alts/vault/SharedVaultTest.java src/test/java/lol/trq/alts/vault/federation/FederationJoinTest.java
 git commit -m @'
 feat(model)!: carry a refresh token and access-token expiry
 
@@ -515,6 +522,12 @@ Widen the record and its factories:
 ```java
     record LoginResult(boolean success, String message, AltAccount account, FailureReason reason) {
 
+        /**
+         * Creates a successful login result.
+         *
+         * @param account the account that was successfully authenticated
+         * @return a new result indicating success
+         */
         public static LoginResult success(AltAccount account) {
             return new LoginResult(true, "Logged in successfully", account, FailureReason.NONE);
         }
@@ -562,6 +575,7 @@ In `AltLoginServiceImpl.java`, give each existing `LoginResult.failure(...)` its
 | `"Error: " + e.getMessage()` in `loginOffline` | `UNKNOWN` |
 | `"Microsoft login not configured"` | `NOT_CONFIGURED` |
 | `"Microsoft Auth: " + msg` | `UNKNOWN` |
+| `"Cookie data empty"` | `INVALID_TOKEN` |
 | `"Cookie Auth: " + msg` | `INVALID_TOKEN` |
 | `"Session Injection: " + e.getMessage()` | `UNKNOWN` |
 
@@ -648,7 +662,9 @@ class RefreshTokenExchangeTest {
                 "/xsts",
                 exchange -> respond(
                         exchange, 200, "{\"Token\":\"xsts\",\"DisplayClaims\":{\"xui\":[{\"uhs\":\"hash\"}]}}"));
-        server.createContext("/mclogin", exchange -> respond(exchange, 200, "{\"access_token\":\"mc-access\"}"));
+        server.createContext(
+                "/mclogin",
+                exchange -> respond(exchange, 200, "{\"access_token\":\"mc-access\",\"expires_in\":86400}"));
         server.createContext(
                 "/mcprofile",
                 exchange -> respond(exchange, 200, "{\"id\":\"00000000000040008000000000000001\",\"name\":\"Alex\"}"));
@@ -690,7 +706,12 @@ class RefreshTokenExchangeTest {
         assertEquals("00000000-0000-4000-8000-000000000001", profile.uuid());
         assertEquals("mc-access", profile.accessToken());
         assertEquals("rotated", profile.refreshToken(), "the rotated token must survive, not the original");
-        assertTrue(profile.expiresAt() > System.currentTimeMillis(), "expires_in must become an absolute expiry");
+
+        // The Minecraft token lives ~24h and the Microsoft OAuth token ~1h. The stamped expiry must
+        // describe the token actually stored on the account, which is the Minecraft one.
+        long fromNow = profile.expiresAt() - System.currentTimeMillis();
+        assertTrue(fromNow > 80_000_000L, "expiry must come from the Minecraft lifetime, not the OAuth one: " + fromNow);
+        assertTrue(fromNow <= 86_400_000L, "expiry must not exceed the advertised lifetime: " + fromNow);
     }
 
     @Test
@@ -774,13 +795,40 @@ Add `expiresIn` to `MsTokens` and thread the tokens through to the profile:
 Extract the shared tail so both entry points use it:
 
 ```java
+    /**
+     * Runs the Xbox Live, XSTS, Minecraft services, and profile steps shared by both entry points.
+     *
+     * @param config the host's Microsoft authentication configuration
+     * @param tokens the Microsoft tokens produced by whichever first step ran
+     * @return a future containing the resolved profile
+     */
     private static CompletableFuture<MinecraftProfile> completeFrom(MicrosoftAuthConfig config, MsTokens tokens) {
         return authenticateWithXboxLive(config, tokens)
                 .thenCompose(xblToken -> authenticateWithXSTS(config, xblToken))
                 .thenCompose(xstsData -> authenticateWithMinecraft(config, xstsData))
-                .thenCompose(mcToken -> getMinecraftProfile(config, mcToken, tokens));
+                .thenCompose(session -> getMinecraftProfile(config, session, tokens));
     }
 ```
+
+**The expiry must come from the Minecraft response, not the Microsoft one.** `MsTokens.expiresIn` describes the Microsoft OAuth access token, which lives about an hour; the token that goes into `AltAccount.accessToken` is the Minecraft services token from `login_with_xbox`, which lives about a day. Stamping the former onto the latter would mark every renewed account expired roughly twenty-three hours early and re-redeem the refresh token on every single login.
+
+So step 4 returns both values. Change `authenticateWithMinecraft` to yield a record instead of a bare string:
+
+```java
+    /** Holds the Minecraft services session token and its advertised lifetime in seconds. */
+    private record McSession(String accessToken, long expiresIn) {}
+```
+
+Its body reads the lifetime alongside the token, defaulting to `0` when absent:
+
+```java
+                JsonObject response = HttpUtil.postJson(config.minecraftLoginUrl(), null, body.toString());
+                if (response == null) throw new Exception("MC services auth failed");
+                long expiresIn = response.has("expires_in") ? response.get("expires_in").getAsLong() : 0L;
+                return new McSession(response.get("access_token").getAsString(), expiresIn);
+```
+
+and its return type becomes `CompletableFuture<McSession>`.
 
 `authenticate(config)` becomes:
 
@@ -791,20 +839,29 @@ Extract the shared tail so both entry points use it:
                 .whenComplete((profile, error) -> server.stop());
 ```
 
-`getMinecraftProfile` takes the `MsTokens` and stamps the profile:
+`getMinecraftProfile` takes the `McSession` and the `MsTokens`, using the Minecraft lifetime for the expiry and the Microsoft refresh token for renewal. Its signature becomes `getMinecraftProfile(MicrosoftAuthConfig config, McSession session, MsTokens tokens)`, it authorizes with `session.accessToken()`, and it returns:
 
 ```java
                 return new MinecraftProfile(
-                        username, uuid, mcAccessToken, tokens.refreshToken(), absoluteExpiry(tokens.expiresIn()));
+                        username, uuid, session.accessToken(), tokens.refreshToken(),
+                        absoluteExpiry(session.expiresIn()));
 ```
 
 with
 
 ```java
+    /**
+     * Converts an advertised lifetime in seconds into an absolute epoch-millis expiry.
+     *
+     * @param expiresInSeconds the lifetime in seconds, or a non-positive value when unknown
+     * @return the absolute expiry, or {@code 0} when the lifetime was unknown
+     */
     private static long absoluteExpiry(long expiresInSeconds) {
         return expiresInSeconds <= 0 ? 0L : System.currentTimeMillis() + (expiresInSeconds * 1000L);
     }
 ```
+
+`MsTokens.expiresIn` is now unused by the profile and exists only to keep the record honest about what the token endpoint returned; keep it, since Task 7 never reads it and dropping it would mean reshaping the record twice.
 
 Add the new entry point and the rejection type:
 
@@ -823,6 +880,9 @@ Add the new entry point and the rejection type:
     public static CompletableFuture<MinecraftProfile> authenticateWithRefreshToken(
             MicrosoftAuthConfig config, String refreshToken) {
         Objects.requireNonNull(config, "config");
+        if (refreshToken == null || refreshToken.isBlank()) {
+            return CompletableFuture.failedFuture(new RefreshRejectedException("refresh token is blank", true));
+        }
         return exchangeRefreshForToken(config, refreshToken).thenCompose(tokens -> completeFrom(config, tokens));
     }
 
@@ -838,7 +898,7 @@ Add the new entry point and the rejection type:
                         URLEncoder.encode(config.scope(), StandardCharsets.UTF_8));
                 response = HttpUtil.postFormForStatus(config.tokenUrl(), null, body);
             } catch (Exception transportFailure) {
-                throw new RefreshRejectedException("refresh transport failure", false);
+                throw new RefreshRejectedException("refresh transport failure", false, transportFailure);
             }
 
             if (!response.successful() || response.body() == null) {
@@ -871,9 +931,23 @@ Add the new entry point and the rejection type:
          *
          * @param message the failure description
          * @param permanent whether the refresh token is permanently spent
+         * @since 0.6.0
          */
         public RefreshRejectedException(String message, boolean permanent) {
-            super(message);
+            this(message, permanent, null);
+        }
+
+        /**
+         * Creates a rejection carrying the underlying failure, so a connection error keeps its
+         * diagnostic instead of being reported as a bare message.
+         *
+         * @param message the failure description
+         * @param permanent whether the refresh token is permanently spent
+         * @param cause the underlying failure, or {@code null}
+         * @since 0.6.0
+         */
+        public RefreshRejectedException(String message, boolean permanent, Throwable cause) {
+            super(message, cause);
             this.permanent = permanent;
         }
 
@@ -1046,7 +1120,7 @@ Expected: 2 tests, both PASS.
 
 ```bash
 git add src/main/java/lol/trq/alts/auth/AccountNetworkUtil.java src/test/java/lol/trq/alts/auth/AccountNetworkUtilTest.java
-git commit -m "refactor(auth): let callers supply the profile endpoint"
+git commit -m "feat(auth): let callers supply the profile endpoint"
 ```
 
 ---
@@ -1332,12 +1406,14 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import lol.trq.alts.auth.AltLoginCallback.FailureReason;
 import lol.trq.alts.auth.AltLoginCallback.LoginResult;
 import lol.trq.alts.model.AccountType;
 import lol.trq.alts.model.AltAccount;
+import lol.trq.alts.model.BanInfo;
 import lol.trq.alts.model.LoginMode;
 import lol.trq.alts.model.SessionData;
 import org.junit.jupiter.api.AfterEach;
@@ -1348,6 +1424,7 @@ import org.junit.jupiter.api.io.TempDir;
 class RefreshLoginRouteTest {
 
     private static final long NOW = 1_800_000_000_000L;
+    private static final String UUID = "00000000-0000-4000-8000-000000000001";
 
     @TempDir
     Path vaultDir;
@@ -1355,8 +1432,10 @@ class RefreshLoginRouteTest {
     private HttpServer server;
     private MicrosoftAuthConfig config;
     private final AtomicReference<SessionData> injected = new AtomicReference<>();
+    private final AtomicReference<String> tokenRequestBody = new AtomicReference<>("");
     private final AtomicInteger tokenCalls = new AtomicInteger();
     private final AtomicInteger profileCalls = new AtomicInteger();
+    private final AtomicBoolean refuseProfileOnce = new AtomicBoolean();
 
     private int tokenStatus = 200;
     private String tokenBody = "{\"access_token\":\"ms-access\",\"refresh_token\":\"rotated\",\"expires_in\":3600}";
@@ -1369,6 +1448,7 @@ class RefreshLoginRouteTest {
         server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         server.createContext("/token", exchange -> {
             tokenCalls.incrementAndGet();
+            tokenRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             respond(exchange, tokenStatus, tokenBody);
         });
         server.createContext("/xbl", exchange -> respond(exchange, 200, "{\"Token\":\"xbl\"}"));
@@ -1376,13 +1456,19 @@ class RefreshLoginRouteTest {
                 "/xsts",
                 exchange -> respond(
                         exchange, 200, "{\"Token\":\"xsts\",\"DisplayClaims\":{\"xui\":[{\"uhs\":\"hash\"}]}}"));
-        server.createContext("/mclogin", exchange -> respond(exchange, 200, "{\"access_token\":\"mc-access\"}"));
+        server.createContext(
+                "/mclogin",
+                exchange -> respond(exchange, 200, "{\"access_token\":\"mc-access\",\"expires_in\":86400}"));
         server.createContext("/mcprofile", exchange -> {
-            profileCalls.incrementAndGet();
+            int call = profileCalls.incrementAndGet();
+            int status = profileStatus;
+            if (refuseProfileOnce.get() && call == 1) {
+                status = 401;
+            }
             respond(
                     exchange,
-                    profileStatus,
-                    profileStatus == 200 ? "{\"id\":\"00000000000040008000000000000001\",\"name\":\"Alex\"}" : "{}");
+                    status,
+                    status == 200 ? "{\"id\":\"00000000000040008000000000000001\",\"name\":\"Alex\"}" : "{}");
         });
         server.start();
 
@@ -1440,48 +1526,106 @@ class RefreshLoginRouteTest {
     }
 
     @Test
-    void expiredAccountRenewsBeforeInjectingASession() throws Exception {
-        AltAccount stored = AltAccount.of("00000000-0000-4000-8000-000000000001", "Alex", "stale", AccountType.MICROSOFT)
-                .withTokens("stale", "stored-refresh", NOW - 1);
+    void expiredAccountRenewsAndPersistsTheRotatedToken() throws Exception {
+        AltAccount stored = AltAccount.of(UUID, "Alex", "stale", AccountType.MICROSOFT)
+                .withTokens("stale", "stored-refresh", NOW - 1)
+                .withBan("serverone", BanInfo.observed("self", "x"))
+                .withSource("democlient", "user1");
+        AltStoreTestSupport.seed(stored);
 
         LoginResult result = service().loginAccount(stored).get();
 
         assertTrue(result.success(), result.message());
         assertEquals(1, tokenCalls.get(), "an expired account renews exactly once");
+        assertTrue(
+                tokenRequestBody.get().contains("refresh_token=stored-refresh"),
+                "the stored token must reach the wire: " + tokenRequestBody.get());
         assertEquals("mc-access", result.account().accessToken());
         assertEquals("rotated", result.account().refreshToken(), "the rotated token replaces the stored one");
+
+        AltAccount persisted = AltStoreTestSupport.find(UUID);
+        assertEquals("rotated", persisted.refreshToken(), "the rotated token must reach disk, not just memory");
+        assertEquals(AccountType.MICROSOFT, persisted.type(), "renewal must not change the account type");
+        assertTrue(persisted.banned("serverone"), "renewal must preserve shared ban records");
+        assertEquals("democlient", persisted.sourceClient(), "renewal must preserve provenance");
     }
 
     @Test
-    void liveAccountDoesNotRenew() throws Exception {
-        AltAccount stored = AltAccount.of("00000000-0000-4000-8000-000000000001", "Alex", "opaque-live", AccountType.MICROSOFT)
-                .withTokens("opaque-live", "stored-refresh", NOW + 3_600_000L);
+    void liveAccountInjectsTheStoredRecordWithoutStrippingIt() throws Exception {
+        AltAccount stored = AltAccount.of(UUID, "Alex", "opaque-live", AccountType.MICROSOFT)
+                .withTokens("opaque-live", "stored-refresh", NOW + 3_600_000L)
+                .withBan("serverone", BanInfo.observed("self", "x"));
+        AltStoreTestSupport.seed(stored);
 
         LoginResult result = service().loginAccount(stored).get();
 
         assertTrue(result.success(), result.message());
         assertEquals(0, tokenCalls.get(), "a live token must not trigger a renewal");
+
+        // Regression guard: routing this path through loginSession would rebuild the account as
+        // AccountType.SESSION with a null refresh token, permanently disabling renewal.
+        assertEquals("stored-refresh", result.account().refreshToken(), "a live login must not drop the credential");
+        assertEquals(AccountType.MICROSOFT, result.account().type(), "a live login must not retype the account");
+        assertEquals("stored-refresh", AltStoreTestSupport.find(UUID).refreshToken());
+        assertEquals(AccountType.MICROSOFT, AltStoreTestSupport.find(UUID).type());
+        assertTrue(AltStoreTestSupport.find(UUID).banned("serverone"), "a live login must preserve bans");
     }
 
     @Test
-    void rejectedAccessTokenRenewsAtMostOnce() throws Exception {
-        profileStatus = 401;
-        AltAccount stored = AltAccount.of("00000000-0000-4000-8000-000000000001", "Alex", "opaque-live", AccountType.MICROSOFT)
+    void connectionFailureIsTransientAndKeepsTheStoredToken() throws Exception {
+        AltAccount stored = AltAccount.of(UUID, "Alex", "stale", AccountType.MICROSOFT)
+                .withTokens("stale", "still-good", NOW - 1);
+        AltStoreTestSupport.seed(stored);
+
+        // Point the token endpoint at a port nothing is listening on.
+        server.stop(0);
+        server = null;
+
+        LoginResult result = service().loginAccount(stored).get();
+
+        assertFalse(result.success());
+        assertEquals(FailureReason.NETWORK, result.reason());
+        assertEquals(
+                "still-good",
+                AltStoreTestSupport.find(UUID).refreshToken(),
+                "an unreachable service must not cost the user their credential");
+    }
+
+    @Test
+    void rejectedAccessTokenRenewsOnceThenSucceeds() throws Exception {
+        // The stored token is live by the clock but refused by the service — a token revoked early, as
+        // happens after a password change. The first profile fetch refuses; the renewed chain's fetch
+        // succeeds, so the reactive path is genuinely exercised end to end.
+        refuseProfileOnce.set(true);
+        AltAccount stored = AltAccount.of(UUID, "Alex", "opaque-live", AccountType.MICROSOFT)
                 .withTokens("opaque-live", "stored-refresh", NOW + 3_600_000L);
+        AltStoreTestSupport.seed(stored);
 
-        // The stored token validates against /mcprofile and is refused; renewal then re-runs the chain,
-        // whose own profile fetch is allowed to succeed.
-        LoginResult first = service().loginAccount(stored).get();
+        LoginResult result = service().loginAccount(stored).get();
 
-        assertFalse(first.success(), "both the stored token and the renewed chain saw a refusing endpoint");
+        assertTrue(result.success(), result.message());
         assertEquals(1, tokenCalls.get(), "renewal is attempted exactly once, never in a loop");
+        assertEquals("rotated", AltStoreTestSupport.find(UUID).refreshToken());
+    }
+
+    @Test
+    void aSecondRejectionFailsRatherThanLooping() throws Exception {
+        profileStatus = 401;
+        AltAccount stored = AltAccount.of(UUID, "Alex", "opaque-live", AccountType.MICROSOFT)
+                .withTokens("opaque-live", "stored-refresh", NOW + 3_600_000L);
+        AltStoreTestSupport.seed(stored);
+
+        LoginResult result = service().loginAccount(stored).get();
+
+        assertFalse(result.success(), "the renewed chain saw the same refusing endpoint");
+        assertEquals(1, tokenCalls.get(), "renewal must not retry itself");
     }
 
     @Test
     void permanentRejectionClearsTheStoredRefreshTokenAndAsksForReauth() throws Exception {
         tokenStatus = 400;
         tokenBody = "{\"error\":\"invalid_grant\"}";
-        AltAccount stored = AltAccount.of("00000000-0000-4000-8000-000000000001", "Alex", "stale", AccountType.MICROSOFT)
+        AltAccount stored = AltAccount.of(UUID, "Alex", "stale", AccountType.MICROSOFT)
                 .withTokens("stale", "revoked-refresh", NOW - 1);
         AltStoreTestSupport.seed(stored);
 
@@ -1498,7 +1642,7 @@ class RefreshLoginRouteTest {
     void transientRejectionKeepsTheStoredRefreshToken() throws Exception {
         tokenStatus = 503;
         tokenBody = "unavailable";
-        AltAccount stored = AltAccount.of("00000000-0000-4000-8000-000000000001", "Alex", "stale", AccountType.MICROSOFT)
+        AltAccount stored = AltAccount.of(UUID, "Alex", "stale", AccountType.MICROSOFT)
                 .withTokens("stale", "still-good", NOW - 1);
         AltStoreTestSupport.seed(stored);
 
@@ -1596,7 +1740,7 @@ In `AltLoginServiceImpl.java`:
     }
 ```
 
-`loginAccount` becomes:
+`loginAccount` becomes the following. **Do not route the live path through `loginSession`.** That method's `finalizeLogin` rebuilds the account with `AltAccount.of(..., AccountType.SESSION)` — no refresh token, no expiry, wrong type — and `AltStore.useAccount` then replaces the stored entry with that stripped copy. A single successful live login would permanently disable renewal for the account. The live path must inject the stored record itself.
 
 ```java
     @Override
@@ -1610,7 +1754,7 @@ In `AltLoginServiceImpl.java`:
         if (TokenExpiry.isExpired(account, clock)) {
             return renew(account);
         }
-        return loginSession(account.accessToken(), LoginMode.DIRECT).thenCompose(result -> {
+        return useStored(account).thenCompose(result -> {
             if (result.success()) {
                 return CompletableFuture.completedFuture(result);
             }
@@ -1618,10 +1762,74 @@ In `AltLoginServiceImpl.java`:
         });
     }
 
+    /**
+     * Validates an account's stored access token and installs the stored record as-is, preserving its
+     * type, refresh token, bans, and provenance.
+     *
+     * @param account the stored account to use
+     * @return a future holding the outcome; a failure means the token was refused and renewal should run
+     */
+    private CompletableFuture<AltLoginCallback.LoginResult> useStored(AltAccount account) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                if (AccountNetworkUtil.fetchProfileFromToken(account.accessToken(), profileUrl()) == null) {
+                    return AltLoginCallback.LoginResult.failure(
+                            "Stored token refused", FailureReason.INVALID_TOKEN);
+                }
+            } catch (Exception unreachable) {
+                return AltLoginCallback.LoginResult.failure(
+                        "Validation failed: " + unreachable.getMessage(), FailureReason.NETWORK);
+            }
+            return inject(account);
+        });
+    }
+
+    /**
+     * Renews an account from its stored refresh token, persisting the rotated credentials before
+     * installing the session. The renewed account is derived from the stored one, so bans, provenance,
+     * and shared attribution survive the renewal.
+     *
+     * @param account the stored account to renew
+     * @return a future holding the outcome
+     */
     private CompletableFuture<AltLoginCallback.LoginResult> renew(AltAccount account) {
         return MicrosoftAuthUtil.authenticateWithRefreshToken(microsoftAuth, account.refreshToken())
-                .thenApply(profile -> finalizeLogin(profile, AccountType.MICROSOFT, LoginMode.DIRECT))
+                .thenApply(profile -> {
+                    AltAccount renewed =
+                            account.withTokens(profile.accessToken(), profile.refreshToken(), profile.expiresAt());
+                    AltStore.updateCredentials(renewed);
+                    return inject(renewed);
+                })
                 .exceptionally(ex -> refreshFailure(ex, account));
+    }
+
+    /**
+     * Installs an already-resolved account as the live session without rebuilding it.
+     *
+     * @param account the account to install
+     * @return the login result
+     */
+    private AltLoginCallback.LoginResult inject(AltAccount account) {
+        try {
+            sessionInjector.inject(
+                    new SessionData(account.username(), account.uuid(), account.accessToken(), account.type()));
+            AltStore.useAccount(account);
+            return AltLoginCallback.LoginResult.success(account);
+        } catch (Exception e) {
+            return AltLoginCallback.LoginResult.failure("Session Injection: " + e.getMessage(), FailureReason.UNKNOWN);
+        }
+    }
+
+    /**
+     * Returns the profile endpoint to validate against — the configured one when Microsoft login is
+     * wired up, and the public default otherwise.
+     *
+     * @return the Minecraft services profile endpoint
+     */
+    private String profileUrl() {
+        return microsoftAuth != null
+                ? microsoftAuth.minecraftProfileUrl()
+                : MicrosoftAuthConfig.DEFAULT_MINECRAFT_PROFILE_URL;
     }
 
     /**
@@ -1643,26 +1851,25 @@ In `AltLoginServiceImpl.java`:
     }
 ```
 
-Add a `finalizeLogin(MinecraftProfile, AccountType, LoginMode)` overload that carries the tokens, delegating the shared tail to the existing method's logic:
+Add a `finalizeLogin(MinecraftProfile, AccountType, LoginMode)` overload for the two flows that produce a *brand-new* account — the browser flow and the refresh-token import route. Those have no stored record to preserve, so building one from scratch is correct here and only here:
 
 ```java
+    /**
+     * Finalizes a flow that produced a brand-new account, carrying the issued credentials onto it.
+     *
+     * @param profile the resolved profile
+     * @param type the type of account used
+     * @param mode the login mode
+     * @return the login result
+     */
     private AltLoginCallback.LoginResult finalizeLogin(MinecraftProfile profile, AccountType type, LoginMode mode) {
-        try {
-            AltAccount account = AltAccount.of(formatUuid(profile.uuid()), profile.username(), profile.accessToken(), type)
-                    .withTokens(profile.accessToken(), profile.refreshToken(), profile.expiresAt());
+        AltAccount account = AltAccount.of(formatUuid(profile.uuid()), profile.username(), profile.accessToken(), type)
+                .withTokens(profile.accessToken(), profile.refreshToken(), profile.expiresAt());
 
-            sessionInjector.inject(
-                    new SessionData(account.username(), account.uuid(), account.accessToken(), account.type()));
-
-            if (mode == LoginMode.ADD) {
-                AltStore.addAccount(account);
-            }
-            AltStore.useAccount(account);
-
-            return AltLoginCallback.LoginResult.success(account);
-        } catch (Exception e) {
-            return AltLoginCallback.LoginResult.failure("Session Injection: " + e.getMessage(), FailureReason.UNKNOWN);
+        if (mode == LoginMode.ADD) {
+            AltStore.addAccount(account);
         }
+        return inject(account);
     }
 ```
 
@@ -1683,15 +1890,33 @@ Point `loginMicrosoft` at the new overload so the browser flow also persists its
 Route `loginSession`'s network validation through the configured endpoint:
 
 ```java
-                String profileUrl = microsoftAuth != null
-                        ? microsoftAuth.minecraftProfileUrl()
-                        : MicrosoftAuthConfig.DEFAULT_MINECRAFT_PROFILE_URL;
-                String[] profile = AccountNetworkUtil.fetchProfileFromToken(cleanToken, profileUrl);
+                String[] profile = AccountNetworkUtil.fetchProfileFromToken(cleanToken, profileUrl());
 ```
 
-- [ ] **Step 6: Add the store mutator**
+- [ ] **Step 6: Add the store mutators**
 
-In `AltStore.java`:
+Two are needed. `AltStore.useAccount` mutates only the in-memory list — it never calls `save()` — so without a persisting mutator the rotated refresh token would never reach disk and the account would die on the *second* renewal, which is precisely the failure this design exists to remove.
+
+```java
+    /**
+     * Replaces the stored entry for {@code account}'s UUID with the given record and persists. Called
+     * after a renewal so the rotated refresh token survives a restart; without it the next process
+     * start would replay a token the authentication service has already invalidated. A no-op if the
+     * UUID is unknown, which is the case for an account that was never added to storage.
+     *
+     * @param account the account carrying freshly issued credentials
+     * @since 0.6.0
+     */
+    public static void updateCredentials(AltAccount account) {
+        ACCOUNTS.replaceAll(a -> a.uuid().equals(account.uuid()) ? account : a);
+        if (currentAccount != null && currentAccount.uuid().equals(account.uuid())) {
+            currentAccount = account;
+        }
+        save();
+    }
+```
+
+and:
 
 ```java
     /**
@@ -1714,7 +1939,7 @@ In `AltStore.java`:
 - [ ] **Step 7: Run the tests to verify they pass**
 
 Run: `./gradlew spotlessApply && ./gradlew test --tests 'lol.trq.alts.auth.RefreshLoginRouteTest'`
-Expected: 7 tests, all PASS.
+Expected: 9 tests, all PASS.
 
 - [ ] **Step 8: Run the full build**
 
@@ -1723,10 +1948,10 @@ Expected: BUILD SUCCESSFUL.
 
 - [ ] **Step 9: Commit**
 
-```bash
+```powershell
 git add src/main/java/lol/trq/alts/auth/AltLoginService.java src/main/java/lol/trq/alts/auth/AltLoginServiceImpl.java src/main/java/lol/trq/alts/store/AltStore.java src/test/java/lol/trq/alts/auth/RefreshLoginRouteTest.java src/test/java/lol/trq/alts/auth/AltStoreTestSupport.java
 git commit -m @'
-feat(auth): add a refresh-token route and renew sessions silently
+feat(auth)!: add a refresh-token route and renew sessions silently
 
 Stored Microsoft accounts replayed an access token that expires in roughly
 a day, so every saved alt died and the only recovery was a full browser
@@ -1736,6 +1961,9 @@ ahead of a known expiry and once reactively when a token is refused.
 A permanently rejected token is discarded and reported as
 REAUTH_REQUIRED; a transient failure keeps the credential and reports
 NETWORK.
+
+BREAKING CHANGE: AltLoginService gains an abstract loginRefreshToken
+method, so any host implementing the interface directly must add it.
 '@
 ```
 
@@ -1783,7 +2011,7 @@ class RefreshTokenSharingTest {
 
     @Test
     void repositoryDefaultsToWithholdingRefreshTokens() throws Exception {
-        VaultIdentity creator = VaultIdentity.generate();
+        VaultIdentity creator = VaultIdentity.create("pw".toCharArray());
 
         SharedVault.CreatedRepo repo = vault.createRepo(creator, List.of(withRefresh()));
 
@@ -1792,7 +2020,7 @@ class RefreshTokenSharingTest {
 
     @Test
     void refreshTokensAreStrippedFromAWithholdingRepository() throws Exception {
-        VaultIdentity creator = VaultIdentity.generate();
+        VaultIdentity creator = VaultIdentity.create("pw".toCharArray());
         SharedVault.CreatedRepo repo = vault.createRepo(creator, List.of(withRefresh()));
 
         List<AltAccount> decrypted = vault.decryptPayload(repo.context(), repo.envelope(), 0L);
@@ -1805,7 +2033,7 @@ class RefreshTokenSharingTest {
 
     @Test
     void refreshTokensSurviveInAnOptedInRepository() throws Exception {
-        VaultIdentity creator = VaultIdentity.generate();
+        VaultIdentity creator = VaultIdentity.create("pw".toCharArray());
         SharedVault.CreatedRepo repo = vault.createRepo(creator, List.of(withRefresh()), true);
 
         List<AltAccount> decrypted = vault.decryptPayload(repo.context(), repo.envelope(), 0L);
@@ -1817,7 +2045,7 @@ class RefreshTokenSharingTest {
 
     @Test
     void aPeerCannotSmuggleRefreshTokensIntoAWithholdingRepository() throws Exception {
-        VaultIdentity creator = VaultIdentity.generate();
+        VaultIdentity creator = VaultIdentity.create("pw".toCharArray());
         SharedVault.CreatedRepo permissive = vault.createRepo(creator, List.of(withRefresh()), true);
 
         // Same key material, but the reader's policy withholds. This models a peer running a modified
@@ -1836,8 +2064,8 @@ class RefreshTokenSharingTest {
     }
 
     @Test
-    void rotationPreservesThePolicy() throws Exception {
-        VaultIdentity creator = VaultIdentity.generate();
+    void rotationPreservesAWithholdingPolicy() throws Exception {
+        VaultIdentity creator = VaultIdentity.create("pw".toCharArray());
         SharedVault.CreatedRepo repo = vault.createRepo(creator, List.of(withRefresh()), false);
 
         SharedVault.RotationResult rotated = vault.rotateKey(repo.context(), List.of(withRefresh()), List.of());
@@ -1846,10 +2074,25 @@ class RefreshTokenSharingTest {
         assertFalse(rotated.context().shareRefreshTokens());
         assertNull(decrypted.get(0).refreshToken(), "a key rotation must not widen the policy");
     }
+
+    @Test
+    void rotationPreservesAnOptedInPolicy() throws Exception {
+        VaultIdentity creator = VaultIdentity.create("pw".toCharArray());
+        SharedVault.CreatedRepo repo = vault.createRepo(creator, List.of(withRefresh()), true);
+
+        SharedVault.RotationResult rotated = vault.rotateKey(repo.context(), List.of(withRefresh()), List.of());
+        List<AltAccount> decrypted = vault.decryptPayload(rotated.context(), rotated.envelope(), 0L);
+
+        // Regression guard: rotateKey builds a fresh RepoContext. Hardcoding false there would silently
+        // downgrade an opted-in repository on every rotation and on every removeMember, and the next
+        // encryptPayload would strip the tokens permanently.
+        assertTrue(rotated.context().shareRefreshTokens(), "rotation must carry the policy forward");
+        assertEquals("secret-refresh", decrypted.get(0).refreshToken());
+    }
 }
 ```
 
-Check `VaultIdentity`'s generator name against `SharedVaultTest` and use whatever that test uses; substitute the real factory if it is not `generate()`.
+`VaultIdentity.create(char[])` is the real factory — confirmed against `VaultIdentity.java:51` and `SharedVaultTest`. There is no `generate()`.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1908,7 +2151,16 @@ A manifest written by an earlier version has no such key, so Gson yields `false`
             throws CryptoException {
 ```
 
-Inside, the manifest and context both take `shareRefreshTokens`, and the `encrypt` call passes it. `openRepo` reads `manifest.shareRefreshTokens()` into the context. `encryptPayload` and `rotateKey` pass `ctx.shareRefreshTokens()`.
+Inside, the manifest and context both take `shareRefreshTokens`, and the `encrypt` call passes it. `openRepo` reads `manifest.shareRefreshTokens()` into the context. `encryptPayload` passes `ctx.shareRefreshTokens()`.
+
+`rotateKey` needs it in **two** places, and missing the second is the trap: it passes `ctx.shareRefreshTokens()` to `encrypt`, *and* it must propagate it into the fresh `RepoContext` it builds at `SharedVault.java:201`:
+
+```java
+        RepoContext newCtx =
+                new RepoContext(ctx.repoId(), ctx.identity(), newDataKey, newVersion, ctx.shareRefreshTokens());
+```
+
+Supplying `false` there compiles fine and silently downgrades an opted-in repository on every rotation and every `removeMember`, after which the next `encryptPayload` strips the tokens for good.
 
 `encrypt` gains the parameter and strips before serializing:
 
@@ -1951,12 +2203,12 @@ The shared helper:
 
 - [ ] **Step 6: Fix existing construction sites**
 
-`SharedVaultTest`, `FederationJoinTest`, `FederationAddressingTest`, and `TransportDtoSerializationTest` construct `VaultManifest` or `RepoContext` positionally. Run `./gradlew compileTestJava` and add the trailing `false` to each. Do not change what those tests assert.
+Three test files construct `VaultManifest` positionally — `SharedVaultTest:47`, `SharedVaultTest:74`, `SharedVaultTest:89`, `FederationJoinTest:67`, and `TransportDtoSerializationTest:37`. No test constructs `RepoContext` directly except the new one added in Step 1. Add the trailing `false` to each manifest. Run `./gradlew compileTestJava` and fix anything else the compiler flags. Do not change what those tests assert.
 
 - [ ] **Step 7: Run the tests to verify they pass**
 
 Run: `./gradlew spotlessApply && ./gradlew test --tests 'lol.trq.alts.vault.*'`
-Expected: the new 5 plus every existing vault test, all PASS.
+Expected: the new 6 plus every existing vault test, all PASS.
 
 - [ ] **Step 8: Commit**
 
@@ -2012,7 +2264,23 @@ Add a section covering the refresh route, the renewal behaviour of `loginAccount
 
 - [ ] **Step 4: Update `CHANGELOG.md`**
 
-Add a `## [0.6.0] - 2026-07-28` section above the existing `[Unreleased]` content, moving the AVP-conformance-vector entry into it. Record under `### Added` the refresh-token route, silent renewal, `FailureReason`, `HttpUtil.HttpResponse`, and the two-argument `fetchProfileFromToken`. Under `### Fixed`, the expired-JWT false success. Under `### Changed`, all four breaking items — `AltAccount`, `LoginResult`, `MinecraftProfile`, and `VaultManifest`/`RepoContext` — each with the migration note from its commit.
+Add a `## [0.6.0] - 2026-07-28` section above the existing `[Unreleased]` content, moving the AVP-conformance-vector entry into it.
+
+Under `### Added`, every new public surface:
+
+- `AltLoginService.loginRefreshToken` and silent renewal inside `loginAccount`
+- `MicrosoftAuthUtil.authenticateWithRefreshToken` and `MicrosoftAuthUtil.RefreshRejectedException`
+- `AltLoginCallback.FailureReason`
+- `TokenExpiry`
+- `AltAccount.withTokens` and `AltAccount.hasRefreshToken`
+- `AltStore.updateCredentials` and `AltStore.clearRefreshToken`
+- `HttpUtil.HttpResponse` and `HttpUtil.postFormForStatus`
+- the two-argument `AccountNetworkUtil.fetchProfileFromToken`
+- the three-argument `SharedVault.createRepo` and the `shareRefreshTokens` repository policy
+
+Under `### Fixed`, the expired-JWT false success.
+
+Under `### Changed`, all five breaking items — `AltAccount`, `LoginResult`, `MinecraftProfile`, `AltLoginService`, and `VaultManifest`/`RepoContext` — each with the migration note from its commit.
 
 - [ ] **Step 5: Bump the version**
 
@@ -2023,11 +2291,13 @@ Add a `## [0.6.0] - 2026-07-28` section above the existing `[Unreleased]` conten
 Run: `./gradlew spotlessApply && ./gradlew build`
 Expected: BUILD SUCCESSFUL, every test green.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Commit, as two logical changes**
 
-```bash
-git add README.md docs/ARCHITECTURE.md docs/GETTING_STARTED.md CHANGELOG.md build.gradle
-git commit -m "docs: document refresh-token login and release 0.6.0"
+```powershell
+git add README.md docs/ARCHITECTURE.md docs/GETTING_STARTED.md CHANGELOG.md
+git commit -m "docs: document the refresh-token route and silent renewal"
+git add build.gradle
+git commit -m "build: release 0.6.0"
 ```
 
 ---
