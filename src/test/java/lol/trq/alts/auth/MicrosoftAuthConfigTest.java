@@ -1,6 +1,7 @@
 package lol.trq.alts.auth;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.junit.jupiter.api.Test;
@@ -30,9 +31,44 @@ class MicrosoftAuthConfigTest {
 
     @Test
     void blankOptionalsFallBackToDefaults() {
-        MicrosoftAuthConfig config = new MicrosoftAuthConfig("app", "  ", null, null, null, null, null, null, null);
+        MicrosoftAuthConfig config =
+                new MicrosoftAuthConfig("app", "  ", null, null, null, null, null, null, null, "  ", "  ");
         assertEquals(MicrosoftAuthConfig.DEFAULT_SCOPE, config.scope());
         assertEquals(MicrosoftAuthConfig.DEFAULT_REDIRECT_PATH, config.redirectPath());
+        assertEquals(MicrosoftAuthConfig.DEFAULT_RPS_TICKET_PREFIX, config.rpsTicketPrefix());
+        assertNull(config.redirectUri(), "a blank redirect uri must normalize to absent, not to empty");
+    }
+
+    @Test
+    void ofTargetsAModernOAuthApp() {
+        MicrosoftAuthConfig config = MicrosoftAuthConfig.of("my-azure-app");
+
+        assertNull(config.redirectUri(), "the OAuth refresh grant carries no redirect uri");
+        assertEquals(MicrosoftAuthConfig.DEFAULT_RPS_TICKET_PREFIX, config.rpsTicketPrefix());
+    }
+
+    @Test
+    void legacyMsaFillsTheLegacyDefaults() {
+        MicrosoftAuthConfig config = MicrosoftAuthConfig.legacyMsa("legacy-app-id");
+
+        assertEquals("legacy-app-id", config.clientId());
+        assertEquals(MicrosoftAuthConfig.LEGACY_MSA_SCOPE, config.scope());
+        assertEquals(MicrosoftAuthConfig.LEGACY_MSA_REDIRECT_URI, config.redirectUri());
+        assertEquals(MicrosoftAuthConfig.LEGACY_MSA_RPS_TICKET_PREFIX, config.rpsTicketPrefix());
+        assertEquals(
+                MicrosoftAuthConfig.DEFAULT_TOKEN_URL,
+                config.tokenUrl(),
+                "a legacy app still redeems at the standard endpoint");
+    }
+
+    @Test
+    void withClientIdKeepsEverythingElse() {
+        MicrosoftAuthConfig config = MicrosoftAuthConfig.legacyMsa("first").withClientId("second");
+
+        assertEquals("second", config.clientId());
+        assertEquals(MicrosoftAuthConfig.LEGACY_MSA_SCOPE, config.scope());
+        assertEquals(MicrosoftAuthConfig.LEGACY_MSA_REDIRECT_URI, config.redirectUri());
+        assertEquals(MicrosoftAuthConfig.LEGACY_MSA_RPS_TICKET_PREFIX, config.rpsTicketPrefix());
     }
 
     @Test

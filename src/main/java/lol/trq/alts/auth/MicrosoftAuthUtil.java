@@ -177,6 +177,11 @@ public final class MicrosoftAuthUtil {
                         URLEncoder.encode(config.clientId(), StandardCharsets.UTF_8),
                         URLEncoder.encode(refreshToken, StandardCharsets.UTF_8),
                         URLEncoder.encode(config.scope(), StandardCharsets.UTF_8));
+                // A legacy MSA app rejects the grant outright unless it declares the redirect it was
+                // registered with. An OAuth app configures none and must not send one.
+                if (config.redirectUri() != null) {
+                    body += "&redirect_uri=" + URLEncoder.encode(config.redirectUri(), StandardCharsets.UTF_8);
+                }
                 response = HttpUtil.postFormForStatus(config.tokenUrl(), null, body);
             } catch (Exception transportFailure) {
                 throw new RefreshRejectedException("refresh transport failure", false, transportFailure);
@@ -232,7 +237,7 @@ public final class MicrosoftAuthUtil {
                 JsonObject properties = new JsonObject();
                 properties.addProperty("AuthMethod", "RPS");
                 properties.addProperty("SiteName", "user.auth.xboxlive.com");
-                properties.addProperty("RpsTicket", "d=" + tokens.accessToken());
+                properties.addProperty("RpsTicket", config.rpsTicketPrefix() + tokens.accessToken());
                 body.add("Properties", properties);
                 body.addProperty("RelyingParty", "http://auth.xboxlive.com");
                 body.addProperty("TokenType", "JWT");

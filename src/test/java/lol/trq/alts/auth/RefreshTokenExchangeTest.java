@@ -11,6 +11,7 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
@@ -28,6 +29,7 @@ class RefreshTokenExchangeTest {
 
     private HttpServer server;
     private final AtomicReference<String> tokenRequestBody = new AtomicReference<>();
+    private final AtomicReference<String> xboxLiveRequestBody = new AtomicReference<>();
     private int tokenStatus = 200;
     private String tokenBody = "{\"access_token\":\"ms-access\",\"refresh_token\":\"rotated\",\"expires_in\":3600}";
 
@@ -43,12 +45,19 @@ class RefreshTokenExchangeTest {
     }
 
     private MicrosoftAuthConfig startServer(String clientId) throws IOException {
+        return startServer(MicrosoftAuthConfig.of(clientId));
+    }
+
+    private MicrosoftAuthConfig startServer(MicrosoftAuthConfig config) throws IOException {
         server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         server.createContext("/token", exchange -> {
             tokenRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             respond(exchange, tokenStatus, tokenBody);
         });
-        server.createContext("/xbl", exchange -> respond(exchange, 200, "{\"Token\":\"xbl\"}"));
+        server.createContext("/xbl", exchange -> {
+            xboxLiveRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, 200, "{\"Token\":\"xbl\"}");
+        });
         server.createContext(
                 "/xsts",
                 exchange -> respond(
@@ -63,14 +72,13 @@ class RefreshTokenExchangeTest {
 
         String base = "http://" + InetAddress.getLoopbackAddress().getHostAddress() + ":"
                 + server.getAddress().getPort();
-        return MicrosoftAuthConfig.of(clientId)
-                .withEndpoints(
-                        base + "/authorize",
-                        base + "/token",
-                        base + "/xbl",
-                        base + "/xsts",
-                        base + "/mclogin",
-                        base + "/mcprofile");
+        return config.withEndpoints(
+                base + "/authorize",
+                base + "/token",
+                base + "/xbl",
+                base + "/xsts",
+                base + "/mclogin",
+                base + "/mcprofile");
     }
 
     /** Counts how many distinct {@code grant_type} parameters a form body actually declares. */
@@ -123,6 +131,48 @@ class RefreshTokenExchangeTest {
         assertTrue(
                 fromNow > 80_000_000L, "expiry must come from the Minecraft lifetime, not the OAuth one: " + fromNow);
         assertTrue(fromNow <= 86_400_000L, "expiry must not exceed the advertised lifetime: " + fromNow);
+    }
+
+    @Test
+    void aModernAppSendsNoRedirectUriAndADelegatedTicket() throws Exception {
+        MicrosoftAuthConfig config = startServer();
+
+        MicrosoftAuthUtil.authenticateWithRefreshToken(config, "original-refresh")
+                .get();
+
+        assertFalse(
+                tokenRequestBody.get().contains("redirect_uri="),
+                "an OAuth refresh grant carries no redirect uri: " + tokenRequestBody.get());
+        assertTrue(
+                xboxLiveRequestBody.get().contains("\"RpsTicket\":\"d=ms-access\""),
+                "an OAuth access token goes up delegated: " + xboxLiveRequestBody.get());
+    }
+
+    /**
+     * A legacy MSA app rejects the OAuth-shaped grant outright with a 400. It wants the desktop
+     * redirect and the MBI_SSL scope, and its access token is an RPS ticket rather than a delegated
+     * one.
+     */
+    @Test
+    void aLegacyMsaAppSendsTheDesktopRedirectTheMbiScopeAndAnRpsTicket() throws Exception {
+        MicrosoftAuthConfig config = startServer(MicrosoftAuthConfig.legacyMsa("legacy-app-id"));
+
+        MicrosoftAuthUtil.authenticateWithRefreshToken(config, "original-refresh")
+                .get();
+
+        String body = tokenRequestBody.get();
+        assertTrue(
+                body.contains("redirect_uri="
+                        + URLEncoder.encode(MicrosoftAuthConfig.LEGACY_MSA_REDIRECT_URI, StandardCharsets.UTF_8)),
+                "a legacy app requires the desktop redirect: " + body);
+        assertTrue(
+                body.contains(
+                        "scope=" + URLEncoder.encode(MicrosoftAuthConfig.LEGACY_MSA_SCOPE, StandardCharsets.UTF_8)),
+                "a legacy app requires the MBI_SSL scope: " + body);
+        assertEquals(1, grantTypeParameters(body), "the grant must stay a single refresh_token grant: " + body);
+        assertTrue(
+                xboxLiveRequestBody.get().contains("\"RpsTicket\":\"t=ms-access\""),
+                "a legacy access token goes up as an RPS ticket: " + xboxLiveRequestBody.get());
     }
 
     @Test

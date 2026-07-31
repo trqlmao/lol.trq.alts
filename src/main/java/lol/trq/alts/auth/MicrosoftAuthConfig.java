@@ -10,6 +10,8 @@ import com.google.gson.annotations.SerializedName;
  * overridden when an implementer fronts them with a proxy or targets a non-standard deployment.
  *
  * <p>Build the common case with {@link #of(String)} and adjust with the {@code withX} copy methods.
+ * A <em>legacy MSA</em> application is a different protocol dialect and comes from
+ * {@link #legacyMsa(String)}.
  *
  * @param clientId the host's Azure application (OAuth) client id; required
  * @param scope the OAuth scope to request
@@ -20,6 +22,9 @@ import com.google.gson.annotations.SerializedName;
  * @param xstsAuthUrl the XSTS authorization endpoint
  * @param minecraftLoginUrl the Minecraft services login-with-Xbox endpoint
  * @param minecraftProfileUrl the Minecraft services profile endpoint
+ * @param redirectUri the {@code redirect_uri} the refresh grant must carry, or null to omit it; the
+ *     authorization-code grant ignores this and uses the address the callback server actually served
+ * @param rpsTicketPrefix the prefix the Microsoft access token carries into the Xbox Live RPS ticket
  * @author trq
  * @since 0.2.0
  */
@@ -32,7 +37,9 @@ public record MicrosoftAuthConfig(
         @SerializedName("xboxLiveAuthUrl") String xboxLiveAuthUrl,
         @SerializedName("xstsAuthUrl") String xstsAuthUrl,
         @SerializedName("minecraftLoginUrl") String minecraftLoginUrl,
-        @SerializedName("minecraftProfileUrl") String minecraftProfileUrl) {
+        @SerializedName("minecraftProfileUrl") String minecraftProfileUrl,
+        @SerializedName("redirectUri") String redirectUri,
+        @SerializedName("rpsTicketPrefix") String rpsTicketPrefix) {
 
     /** Default OAuth scope for a Minecraft login. */
     public static final String DEFAULT_SCOPE = "XboxLive.signin XboxLive.offline_access";
@@ -60,6 +67,18 @@ public record MicrosoftAuthConfig(
     /** Default Minecraft services profile endpoint. */
     public static final String DEFAULT_MINECRAFT_PROFILE_URL = "https://api.minecraftservices.com/minecraft/profile";
 
+    /** Prefix marking an OAuth 2.0 access token as delegated when it is exchanged at Xbox Live. */
+    public static final String DEFAULT_RPS_TICKET_PREFIX = "d=";
+
+    /** The scope a legacy MSA application authenticates Xbox Live with. */
+    public static final String LEGACY_MSA_SCOPE = "service::user.auth.xboxlive.com::MBI_SSL";
+
+    /** The redirect a legacy MSA application's token grant must declare. */
+    public static final String LEGACY_MSA_REDIRECT_URI = "https://login.live.com/oauth20_desktop.srf";
+
+    /** Prefix marking a legacy MSA access token as an RPS ticket proper. */
+    public static final String LEGACY_MSA_RPS_TICKET_PREFIX = "t=";
+
     /** Validates the required client id and substitutes defaults for any blank optional. */
     public MicrosoftAuthConfig {
         if (clientId == null || clientId.isBlank()) {
@@ -73,6 +92,8 @@ public record MicrosoftAuthConfig(
         xstsAuthUrl = blankToDefault(xstsAuthUrl, DEFAULT_XSTS_AUTH_URL);
         minecraftLoginUrl = blankToDefault(minecraftLoginUrl, DEFAULT_MINECRAFT_LOGIN_URL);
         minecraftProfileUrl = blankToDefault(minecraftProfileUrl, DEFAULT_MINECRAFT_PROFILE_URL);
+        redirectUri = redirectUri == null || redirectUri.isBlank() ? null : redirectUri;
+        rpsTicketPrefix = blankToDefault(rpsTicketPrefix, DEFAULT_RPS_TICKET_PREFIX);
     }
 
     /**
@@ -82,7 +103,60 @@ public record MicrosoftAuthConfig(
      * @return a fully-defaulted config
      */
     public static MicrosoftAuthConfig of(String clientId) {
-        return new MicrosoftAuthConfig(clientId, null, null, null, null, null, null, null, null);
+        return new MicrosoftAuthConfig(clientId, null, null, null, null, null, null, null, null, null, null);
+    }
+
+    /**
+     * Creates a config for a <em>legacy MSA</em> application — the pre-Azure registration shape.
+     *
+     * <p>Three things differ from an OAuth app and all three are load-bearing: the token grant must
+     * declare {@link #LEGACY_MSA_REDIRECT_URI}, it must ask for {@link #LEGACY_MSA_SCOPE} instead of
+     * the delegated Xbox scopes, and the access token it returns is an RPS ticket that Xbox Live
+     * wants prefixed {@code t=} rather than {@code d=}. Sending the OAuth shape to one of these apps
+     * is answered with a flat {@code 400}.
+     *
+     * <p>Refresh tokens are the practical use: the interactive browser flow needs the desktop
+     * redirect these apps declare, which the loopback callback server cannot serve.
+     *
+     * @param clientId the legacy application id; required
+     * @return a config speaking the legacy MSA dialect
+     * @since 0.7.0
+     */
+    public static MicrosoftAuthConfig legacyMsa(String clientId) {
+        return new MicrosoftAuthConfig(
+                clientId,
+                LEGACY_MSA_SCOPE,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                LEGACY_MSA_REDIRECT_URI,
+                LEGACY_MSA_RPS_TICKET_PREFIX);
+    }
+
+    /**
+     * Returns a copy targeting a different application, keeping the dialect and endpoints.
+     *
+     * @param value the new client id; required
+     * @return a copy with the client id replaced
+     * @since 0.7.0
+     */
+    public MicrosoftAuthConfig withClientId(String value) {
+        return new MicrosoftAuthConfig(
+                value,
+                scope,
+                redirectPath,
+                authorizeUrl,
+                tokenUrl,
+                xboxLiveAuthUrl,
+                xstsAuthUrl,
+                minecraftLoginUrl,
+                minecraftProfileUrl,
+                redirectUri,
+                rpsTicketPrefix);
     }
 
     /**
@@ -101,7 +175,9 @@ public record MicrosoftAuthConfig(
                 xboxLiveAuthUrl,
                 xstsAuthUrl,
                 minecraftLoginUrl,
-                minecraftProfileUrl);
+                minecraftProfileUrl,
+                redirectUri,
+                rpsTicketPrefix);
     }
 
     /**
@@ -120,7 +196,9 @@ public record MicrosoftAuthConfig(
                 xboxLiveAuthUrl,
                 xstsAuthUrl,
                 minecraftLoginUrl,
-                minecraftProfileUrl);
+                minecraftProfileUrl,
+                redirectUri,
+                rpsTicketPrefix);
     }
 
     /**
@@ -151,7 +229,9 @@ public record MicrosoftAuthConfig(
                 xboxLiveAuthUrl,
                 xstsAuthUrl,
                 minecraftLoginUrl,
-                minecraftProfileUrl);
+                minecraftProfileUrl,
+                redirectUri,
+                rpsTicketPrefix);
     }
 
     private static String blankToDefault(String value, String fallback) {

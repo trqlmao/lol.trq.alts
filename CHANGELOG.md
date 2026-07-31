@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `MicrosoftAuthConfig.legacyMsa(String)`, for authenticating against a *legacy MSA* application
+  rather than an Azure OAuth one. The two are different dialects of the same flow and the library
+  previously spoke only the OAuth one, so a refresh token issued to a legacy app could not be
+  redeemed at all: the token endpoint answered the grant with a flat `400`. Three things differ, and
+  all three are load-bearing — the grant must declare the desktop redirect the app registered, it
+  must request the `MBI_SSL` scope instead of the delegated Xbox scopes, and the access token that
+  comes back is an RPS ticket that Xbox Live wants prefixed `t=` rather than `d=`. A host holding a
+  credential minted by a legacy application now has a way to redeem it.
+- `MicrosoftAuthConfig.withClientId(String)`, to retarget a config at another application while
+  keeping its dialect and endpoints.
+
+### Changed
+
+- `MicrosoftAuthConfig` gains a `redirectUri` and an `rpsTicketPrefix` component. Both default to the
+  previous behaviour — no redirect on the refresh grant, a `d=` ticket — so an OAuth host sees no
+  change on the wire. Hosts calling the canonical constructor rather than `of(...)` must pass the two
+  new arguments.
+
 ## [0.6.2] - 2026-07-28
 
 ### Fixed
