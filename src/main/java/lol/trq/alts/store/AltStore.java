@@ -7,11 +7,14 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.annotations.SerializedName;
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import lol.trq.alts.model.AltAccount;
 import lol.trq.alts.model.BanInfo;
 import lol.trq.alts.spi.VaultDirectoryProvider;
@@ -47,12 +50,18 @@ public final class AltStore {
     /** Default key-binding constant; the host may override via {@link #configure}. */
     private static final String DEFAULT_KEY_BINDING = "lol.trq.alts";
 
-    private static final List<AltAccount> ACCOUNTS = new ArrayList<>();
+    /** Suffix given to a store file that could not be read, so a failed load never costs the data. */
+    private static final String UNREADABLE_SUFFIX = ".unreadable";
 
-    private static String fileName = DEFAULT_FILE_NAME;
-    private static String keyBinding = DEFAULT_KEY_BINDING;
-    private static VaultDirectoryProvider directoryProvider;
-    private static AltAccount currentAccount = null;
+    // Copy-on-write because logins resolve on the common pool while the host reads accounts() from its
+    // render thread; a plain ArrayList lets one thread's write blow up the other's iteration.
+    private static final List<AltAccount> ACCOUNTS = new CopyOnWriteArrayList<>();
+
+    private static volatile String fileName = DEFAULT_FILE_NAME;
+    private static volatile String keyBinding = DEFAULT_KEY_BINDING;
+    private static volatile VaultDirectoryProvider directoryProvider;
+    private static volatile AltAccount currentAccount = null;
+    private static volatile String loadError;
 
     private AltStore() {}
 
@@ -102,12 +111,30 @@ public final class AltStore {
     }
 
     /**
-     * Returns the list of all accounts currently held in memory.
+     * Returns the list of all accounts currently held in memory. The list is copy-on-write, so a host
+     * may iterate it from its render thread while a login resolving on a background thread mutates it;
+     * the iteration sees a snapshot rather than failing.
      *
      * @return the live list of accounts
      */
     public static List<AltAccount> accounts() {
         return ACCOUNTS;
+    }
+
+    /**
+     * Returns why the last {@link #load()} could not read an existing store file, if it could not.
+     *
+     * <p>A store that fails to decrypt is not an empty store, and the two must not be confused: the key
+     * is derived from machine properties, so a renamed OS user or a moved home directory turns a
+     * perfectly good file into an unreadable one. While this is set, {@link #save()} preserves the
+     * unreadable file rather than overwriting it, and a host should tell the user their accounts did not
+     * load instead of showing an empty list.
+     *
+     * @return the failure description, or empty when the last load succeeded or found no file
+     * @since 0.7.0
+     */
+    public static Optional<String> loadError() {
+        return Optional.ofNullable(loadError);
     }
 
     /**
@@ -202,13 +229,15 @@ public final class AltStore {
     }
 
     /**
-     * Removes an account from storage and saves.
+     * Removes the stored account with the same UUID and saves. Keyed on the UUID like every other
+     * mutator here, so a caller holding a stale copy — one read before a renewal rotated its tokens —
+     * still removes the right entry.
      *
      * @param account the account to remove
      */
     public static void removeAccount(AltAccount account) {
-        ACCOUNTS.remove(account);
-        if (currentAccount == account) {
+        ACCOUNTS.removeIf(a -> a.uuid().equals(account.uuid()));
+        if (currentAccount != null && currentAccount.uuid().equals(account.uuid())) {
             currentAccount = null;
         }
         save();
@@ -217,12 +246,19 @@ public final class AltStore {
     /**
      * Encrypts and persists the current accounts to disk under the hardware-bound key from
      * {@link EncryptionUtil#getHardwareKey(String)}.
+     *
+     * <p>Does nothing when the last {@link #load()} left an unreadable file behind that could not be
+     * copied aside — see {@link #loadError()}. Persisting there would write an empty store over accounts
+     * that are merely unreadable, which is worse than not persisting at all.
      */
     public static void save() {
         try {
             File directory = directory();
             if (!directory.exists()) {
                 directory.mkdirs();
+            }
+            if (!preserveUnreadable(directory)) {
+                return;
             }
 
             StorageData data = new StorageData(new ArrayList<>(ACCOUNTS));
@@ -234,14 +270,25 @@ public final class AltStore {
         }
     }
 
-    /** Loads and decrypts accounts from disk into memory, clearing existing entries first. */
+    /**
+     * Loads and decrypts accounts from disk into memory, clearing existing entries first. A file that
+     * exists but cannot be read leaves the in-memory list alone and records the reason on
+     * {@link #loadError()}.
+     */
     public static void load() {
+        File file;
         try {
-            File file = new File(directory(), fileName);
+            file = new File(directory(), fileName);
             if (!file.exists()) {
+                loadError = null;
                 return;
             }
+        } catch (Exception unavailable) {
+            loadError = describe(unavailable);
+            return;
+        }
 
+        try {
             String encrypted = Files.readString(file.toPath());
             String json = EncryptionUtil.decrypt(encrypted, EncryptionUtil.getHardwareKey(keyBinding));
 
@@ -254,9 +301,51 @@ public final class AltStore {
                     ACCOUNTS.addAll(loaded.accounts());
                 }
             }
-        } catch (Exception ignored) {
-            // Exceptions are ignored for production stability
+            loadError = null;
+        } catch (Exception unreadable) {
+            loadError = describe(unreadable);
         }
+    }
+
+    /**
+     * Copies an unreadable store aside so the next {@link #save()} cannot destroy it. The copy is made
+     * once — a second failure must not overwrite the first, older backup, which is the one holding the
+     * accounts.
+     *
+     * @param directory the store directory
+     * @return true when saving may proceed, false when the unreadable file could not be preserved
+     */
+    private static boolean preserveUnreadable(File directory) {
+        if (loadError == null) {
+            return true;
+        }
+        Path source = new File(directory, fileName).toPath();
+        if (!Files.exists(source)) {
+            return true;
+        }
+        Path backup = new File(directory, fileName + UNREADABLE_SUFFIX).toPath();
+        if (Files.exists(backup)) {
+            return true;
+        }
+        try {
+            Files.copy(source, backup);
+            return true;
+        } catch (IOException unwritable) {
+            return false;
+        }
+    }
+
+    /**
+     * Renders a failure as a short description, falling back to the type when it carries no message.
+     *
+     * @param failure the failure to describe
+     * @return a one-line description
+     */
+    private static String describe(Throwable failure) {
+        String message = failure.getMessage();
+        return message != null && !message.isBlank()
+                ? failure.getClass().getSimpleName() + ": " + message
+                : failure.getClass().getSimpleName();
     }
 
     private static File directory() {
