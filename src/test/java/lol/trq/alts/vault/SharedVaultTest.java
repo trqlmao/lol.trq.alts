@@ -111,7 +111,7 @@ class SharedVaultTest {
                 AccountType.MICROSOFT,
                 5000L,
                 "member-alice",
-                Map.of("hypixel", new BanInfo(true, 9000L, "self", "Watchdog", "member-bob")),
+                Map.of("example.net", new BanInfo(true, 9000L, "self", "anticheat", "member-bob")),
                 null,
                 null,
                 null,
@@ -124,10 +124,10 @@ class SharedVaultTest {
         assertEquals(5000L, recovered.lastUsed()); // activity shared
         assertEquals("member-alice", recovered.lastUsedBy()); // activity attribution shared
         assertTrue(recovered.banned()); // ban status shared
-        assertTrue(recovered.banned("hypixel")); // per-server ban shared
-        assertEquals("Watchdog", recovered.bans().get("hypixel").detail());
-        assertEquals(9000L, recovered.bans().get("hypixel").observedAt());
-        assertEquals("member-bob", recovered.bans().get("hypixel").observedBy()); // ban attribution shared
+        assertTrue(recovered.banned("example.net")); // per-server ban shared
+        assertEquals("anticheat", recovered.bans().get("example.net").detail());
+        assertEquals(9000L, recovered.bans().get("example.net").observedAt());
+        assertEquals("member-bob", recovered.bans().get("example.net").observedBy()); // ban attribution shared
     }
 
     @Test

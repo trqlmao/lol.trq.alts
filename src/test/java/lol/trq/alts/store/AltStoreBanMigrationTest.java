@@ -37,12 +37,12 @@ class AltStoreBanMigrationTest {
     @Test
     void existingBansMapIsUntouched() {
         String current =
-                "{\"accounts\":[{\"uuid\":\"u\",\"bans\":{\"hypixel\":{\"banned\":true,\"observedAt\":2,\"source\":\"self\",\"detail\":\"d\"}}}]}";
+                "{\"accounts\":[{\"uuid\":\"u\",\"bans\":{\"example.net\":{\"banned\":true,\"observedAt\":2,\"source\":\"self\",\"detail\":\"d\"}}}]}";
 
         JsonObject account = firstAccount(current);
 
         assertFalse(account.has("ban"));
-        assertTrue(account.getAsJsonObject("bans").has("hypixel"));
+        assertTrue(account.getAsJsonObject("bans").has("example.net"));
     }
 
     @Test

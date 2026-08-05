@@ -43,12 +43,12 @@ class AltAccountSerializationTest {
     @Test
     void parsesBansWithoutProvenance() {
         String json =
-                "{\"uuid\":\"u\",\"username\":\"Steve\",\"accessToken\":\"tok\",\"type\":\"MICROSOFT\",\"lastUsed\":1,\"bans\":{\"hypixel\":{\"banned\":true,\"observedAt\":2,\"source\":\"self\",\"detail\":\"d\",\"observedBy\":\"m\"}}}";
+                "{\"uuid\":\"u\",\"username\":\"Steve\",\"accessToken\":\"tok\",\"type\":\"MICROSOFT\",\"lastUsed\":1,\"bans\":{\"example.net\":{\"banned\":true,\"observedAt\":2,\"source\":\"self\",\"detail\":\"d\",\"observedBy\":\"m\"}}}";
 
         AltAccount account = gson.fromJson(json, AltAccount.class);
 
         assertTrue(account.banned());
-        assertTrue(account.banned("hypixel"));
+        assertTrue(account.banned("example.net"));
         assertNull(account.sourceClient());
         assertNull(account.sourceUser());
     }
@@ -91,32 +91,32 @@ class AltAccountSerializationTest {
     @Test
     void perServerBanRoundTripsAndFlagsBanned() {
         AltAccount banned = AltAccount.of("u", "Herobrine", "t", AccountType.MICROSOFT)
-                .withBan("hypixel", BanInfo.observed("self", "cheating"));
+                .withBan("example.net", BanInfo.observed("self", "cheating"));
         assertTrue(banned.banned(), "banned on any");
-        assertTrue(banned.banned("hypixel"));
-        assertEquals(java.util.Set.of("hypixel"), banned.bannedServers());
+        assertTrue(banned.banned("example.net"));
+        assertEquals(java.util.Set.of("example.net"), banned.bannedServers());
 
         AltAccount restored = gson.fromJson(gson.toJson(banned), AltAccount.class);
         assertEquals(banned, restored);
-        assertTrue(restored.banned("hypixel"));
-        assertEquals("self", restored.bans().get("hypixel").source());
+        assertTrue(restored.banned("example.net"));
+        assertEquals("self", restored.bans().get("example.net").source());
     }
 
     @Test
     void bansAreIndependentPerServer() {
         AltAccount alt = AltAccount.of("u", "Alex", "t", AccountType.MICROSOFT)
-                .withBan("hypixel", BanInfo.observed("self", "x"))
-                .withBan("cubecraft", BanInfo.observed("login", "y"));
+                .withBan("example.net", BanInfo.observed("self", "x"))
+                .withBan("example.org", BanInfo.observed("login", "y"));
 
-        assertTrue(alt.banned("hypixel"));
-        assertTrue(alt.banned("cubecraft"));
-        assertFalse(alt.banned("mineplex"), "not banned on a server with no entry");
-        assertEquals(java.util.Set.of("hypixel", "cubecraft"), alt.bannedServers());
+        assertTrue(alt.banned("example.net"));
+        assertTrue(alt.banned("example.org"));
+        assertFalse(alt.banned("unlisted.example"), "not banned on a server with no entry");
+        assertEquals(java.util.Set.of("example.net", "example.org"), alt.bannedServers());
 
         // Clearing one server leaves the other intact.
-        AltAccount cleared = alt.withBan("hypixel", null);
-        assertFalse(cleared.banned("hypixel"));
-        assertTrue(cleared.banned("cubecraft"));
+        AltAccount cleared = alt.withBan("example.net", null);
+        assertFalse(cleared.banned("example.net"));
+        assertTrue(cleared.banned("example.org"));
         assertTrue(cleared.banned(), "still banned somewhere");
     }
 
@@ -136,7 +136,7 @@ class AltAccountSerializationTest {
     void withTokensReplacesCredentialsAndPreservesEverythingElse() {
         AltAccount base = AltAccount.of("u", "Alex", "old-access", AccountType.MICROSOFT)
                 .withSource("democlient", "user1")
-                .withBan("hypixel", BanInfo.observed("self", "x"));
+                .withBan("example.net", BanInfo.observed("self", "x"));
 
         AltAccount renewed = base.withTokens("new-access", "new-refresh", 1717000000000L);
 
@@ -146,7 +146,7 @@ class AltAccountSerializationTest {
         assertTrue(renewed.hasRefreshToken());
         assertEquals("democlient", renewed.sourceClient(), "withTokens preserves provenance");
         assertEquals("user1", renewed.sourceUser(), "withTokens preserves provenance");
-        assertTrue(renewed.banned("hypixel"), "withTokens preserves bans");
+        assertTrue(renewed.banned("example.net"), "withTokens preserves bans");
         assertEquals(base.lastUsed(), renewed.lastUsed(), "withTokens does not restamp last-used");
     }
 
