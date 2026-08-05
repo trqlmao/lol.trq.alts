@@ -58,7 +58,26 @@ AltsRuntime<MyHandle> alts = new AltsRuntime.Builder<MyHandle>()
 
 For Microsoft login you must register your own [Azure application](https://learn.microsoft.com/azure/active-directory/develop/quickstart-register-app) and pass its client id — the library intentionally ships no shared default. Keep the id out of source control (for example in a git-ignored `.env` your build reads), and override the scope or endpoints with `MicrosoftAuthConfig.of(id).withScope(...)` / `.withEndpoints(...)` only if you front the services with a proxy.
 
+If your credential was minted by a **legacy MSA** application rather than an Azure OAuth one, use `MicrosoftAuthConfig.legacyMsa(id)` instead of `of(id)`. The two are different dialects of the same flow — the grant must declare the desktop redirect the app registered, ask for the `MBI_SSL` scope, and hand Xbox Live a `t=`-prefixed RPS ticket — and sending the OAuth shape to a legacy app is answered with a flat `400`. Refresh tokens are the practical use: the interactive browser flow needs the desktop redirect these apps declare, which the loopback callback server cannot serve.
+
 Compiled as `GettingStartedExample.buildRuntime`.
+
+`build()` also reads whatever store is already on disk, so `AltStore.accounts()` is populated by the time it returns — you do not call `AltStore.load()` yourself.
+
+A file that exists but cannot be read is a third state, and worth handling. The store's key is derived from machine properties, so a renamed OS user or a moved home directory turns a good file unreadable; the library refuses to overwrite one and tells you why, but only you can tell the user:
+
+```java
+AltStore.loadError()
+        .ifPresent(reason -> alts.toasts()
+                .toast(
+                        ToastSink.Level.ERROR,
+                        "Accounts not loaded",
+                        "The saved file could not be read: " + reason,
+                        8000));
+```
+
+Showing an empty list instead reads as "my accounts are gone". Compiled as
+`GettingStartedExample.warnIfTheStoreDidNotLoad`.
 
 ## 4. Use it
 
@@ -86,6 +105,32 @@ for (AltAccount account : saved) {
 ```
 
 Compiled as `GettingStartedExample.logInAndRead`.
+
+## Logging in from a cookie file
+
+Cookie exports arrive as files far more often than as pasted text: every browser extension that produces
+them writes a `cookies.txt`, and the Netscape format they use is line-oriented, so pasting one through a
+single-line input mangles it. Hand the library the path instead:
+
+```java
+alts.loginService().loginCookieFile(chosen, LoginMode.ADD).thenAccept(result -> {
+    if (result.success()) {
+        render(result.account().username());
+    } else {
+        showError(result.message());
+    }
+});
+```
+
+The read runs off the calling thread, so this is safe to call straight from a file-picker callback on the
+render thread, and a file that is missing, is not a file, is larger than `CookieFile.MAX_BYTES`, or holds
+nothing comes back as an `INVALID_TOKEN` result rather than as a thrown exception.
+
+Decoding honours a byte-order mark. A file redirected out of PowerShell is UTF-16LE, which read as UTF-8
+yields text interleaved with NUL bytes that no cookie parser recognises — a failure that reads to the user
+as "my cookies are bad" rather than "my file is in another encoding". If you collect cookie text some
+other way, `CookieFile.read(Path)` is public so you can reuse the size cap and the encoding handling
+without the login route. Compiled as `GettingStartedExample.logInFromCookieFile`.
 
 ## Refresh tokens and silent renewal
 

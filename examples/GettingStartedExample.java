@@ -91,6 +91,41 @@ public final class GettingStartedExample {
     }
 
     /**
+     * Section 3: telling the user their accounts did not load, rather than showing them an empty list.
+     * The store's key is derived from machine properties, so an ordinary environment change can make a
+     * good file unreadable — and that is not the same thing as having no accounts.
+     *
+     * @param alts the runtime built by {@link #buildRuntime}
+     */
+    public static void warnIfTheStoreDidNotLoad(AltsRuntime<MyHandle> alts) {
+        AltStore.loadError()
+                .ifPresent(reason -> alts.toasts()
+                        .toast(
+                                ToastSink.Level.ERROR,
+                                "Accounts not loaded",
+                                "The saved file could not be read: " + reason,
+                                8000));
+    }
+
+    /**
+     * Section "Logging in from a cookie file": handing the library a path the user picked. The read runs
+     * off the calling thread, so this is safe to call straight from a file-picker callback on the render
+     * thread, and an unreadable file comes back as a failed result rather than as a thrown exception.
+     *
+     * @param alts the runtime built by {@link #buildRuntime}
+     * @param chosen the cookie file the user picked
+     */
+    public static void logInFromCookieFile(AltsRuntime<MyHandle> alts, Path chosen) {
+        alts.loginService().loginCookieFile(chosen, LoginMode.ADD).thenAccept(result -> {
+            if (result.success()) {
+                render(result.account().username());
+            } else {
+                showError(result.message());
+            }
+        });
+    }
+
+    /**
      * Section "Refresh tokens and silent renewal": logging into a stored account renews it silently, so
      * the caller drives nothing.
      *

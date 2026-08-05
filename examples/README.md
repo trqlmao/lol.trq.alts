@@ -6,13 +6,14 @@ cannot drift from the library API) but are not part of the published jar.
 ## `GettingStartedExample`
 
 The compiled companion to [`../docs/GETTING_STARTED.md`](../docs/GETTING_STARTED.md). Every snippet
-that guide shows is a method here, one per section: building the runtime, logging in and reading the
-caches, silent renewal and refresh-token import, branching on the typed failure reason, and creating a
-shared repository under either refresh-token sharing policy.
+that guide shows is a method here, one per section: building the runtime, reporting a store that could
+not be read, logging in and reading the caches, logging in from a cookie file, silent renewal and
+refresh-token import, branching on the typed failure reason, and creating a shared repository under
+either refresh-token sharing policy.
 
 This file is the authoritative copy — the guide inlines its key lines. Change the library API and the
 build breaks here, which is the point: markdown alone rots silently. Keep the two in step when either
-moves.
+moves. Spotless formats this directory too, so a snippet pasted into the guide is already house-styled.
 
 ## `ExampleNetGameStatsSource`
 

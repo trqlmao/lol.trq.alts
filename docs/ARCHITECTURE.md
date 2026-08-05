@@ -12,7 +12,7 @@
             ┌───────────────┴─────────────────────────────┐
             │  AltsRuntime  — wiring root + Builder         │
             ├──────────────────────────────────────────────┤
-  library   │ auth/   login flows (MS / refresh / cookie / session / offline)
+  library   │ auth/   login flows (MS / refresh / cookie / cookie file / session / offline)
             │ store/  AltStore (encrypted file) + EncryptionUtil
             │ cache/  AsyncCache<K,V>
             │ skin/   SkinAvatarCache<H>
@@ -24,13 +24,17 @@
 
 ## Key pieces
 
-- **`AltsRuntime<H>`** — the single wiring root. Its builder takes the seam implementations, validates the required ones, binds the static helpers (`AltStore`, `SecretStore`, `AltsToasts`), and constructs the login service and caches. `H` is the host renderer's texture-handle type, threaded through `SkinAvatarCache<H>` so the cache is type-safe without the library knowing what a texture is.
+- **`AltsRuntime<H>`** — the single wiring root. Its builder takes the seam implementations, validates the required ones, binds the static helpers (`AltStore`, `SecretStore`, `AltsToasts`), loads whatever those stores already hold on disk, and constructs the login service and caches. `H` is the host renderer's texture-handle type, threaded through `SkinAvatarCache<H>` so the cache is type-safe without the library knowing what a texture is.
 
 - **`spi/` seams** — the entire host boundary. The library calls these interfaces; it never imports a host class. This is what makes the same core usable from different mods and different renderers.
 
-- **`auth/`** — `AltLoginService` exposes six `CompletableFuture`-based methods: five login routes (Microsoft, refresh token, cookie, session, offline) plus `loginAccount`, which logs into a record you already hold. The implementation runs the OAuth / cookie / token flows off-thread and hands the resolved identity to the host's `SessionInjector` as a transport-neutral `SessionData`. `loginAccount` renews an expired session in place from the account's stored refresh token — proactively when `TokenExpiry` says the access token is spent, and once reactively when the services refuse it — persisting the rotated credential before installing the session. Outcomes carry a typed `AltLoginCallback.FailureReason`, so a host can tell `REAUTH_REQUIRED` (the credential is permanently spent) from `NETWORK` (retryable) without matching on a message string.
+- **`auth/`** — `AltLoginService` exposes seven `CompletableFuture`-based methods: six login routes (Microsoft, refresh token, cookie text, cookie file, session, offline) plus `loginAccount`, which logs into a record you already hold. The implementation runs the OAuth / cookie / token flows off-thread and hands the resolved identity to the host's `SessionInjector` as a transport-neutral `SessionData`. `loginAccount` renews an expired session in place from the account's stored refresh token — proactively when `TokenExpiry` says the access token is spent, and once reactively when the services refuse it — persisting the rotated credential before installing the session. Outcomes carry a typed `AltLoginCallback.FailureReason`, so a host can tell `REAUTH_REQUIRED` (the credential is permanently spent) from `NETWORK` (retryable) without matching on a message string. Every route classifies those two apart: a service that refused an answer and a service that never gave one mean opposite things to the user in front of it.
 
-- **`store/`** — `AltStore` is a static façade over an encrypted on-disk file. `EncryptionUtil` does AES-256-GCM with a PBKDF2-derived, machine-bound key. The filename and the key-binding constant are host-configurable so different hosts (and migrations from earlier layouts) don't collide.
+  `MicrosoftAuthConfig` carries the dialect as well as the endpoints. An Azure OAuth application and a *legacy MSA* one differ in three load-bearing ways — the redirect the grant must declare, the scope it asks for, and whether Xbox Live wants the ticket prefixed `d=` or `t=` — so `legacyMsa(clientId)` exists alongside `of(clientId)` rather than being a flag on the flow.
+
+- **`store/`** — `AltStore` is a static façade over an encrypted on-disk file, and `SecretStore` is the same shape for per-user secrets that must never enter a shared repository. `EncryptionUtil` does AES-256-GCM with a PBKDF2-derived, machine-bound key. The filename and the key-binding constant are host-configurable so different hosts (and migrations from earlier layouts) don't collide.
+
+  Because the key is derived from machine properties, an ordinary environment change — a renamed OS user, a moved home directory — turns a perfectly good file unreadable. Both stores therefore treat "cannot read" and "nothing stored" as different states: a failed load leaves the in-memory collection alone, records why on `loadError()`, and is copied aside to `<name>.unreadable` before any later save can replace it. The copy is made once, so a second failure cannot overwrite the backup that holds the data, and a save that cannot make the copy is skipped rather than allowed to destroy the original.
 
 - **`cache/AsyncCache<K,V>`** — the reusable async-lookup primitive. `get(key)` never blocks: it returns the cached value or `null`, firing a background fetch on a miss. Entry states (pending / failed / value) are encoded as sentinels because `ConcurrentHashMap` forbids nulls. A positive TTL makes it stale-while-revalidate. Both `SkinAvatarCache` and the per-server game-stats caches are built on this; `AltsRuntime.gameStats(serverId)` returns one cache per registered `GameStatsSource`.
 
@@ -46,7 +50,7 @@ Shared repositories are federated by **portable identity + addressing**, not ser
 
 - Login flows and cache fetches run on the common `ForkJoinPool` via `CompletableFuture`.
 - Anything that must touch render-thread state (texture upload, session install) is marshalled through the host's `MainThreadExecutor`.
-- `AltStore`'s in-memory list is mutated on the calling thread; persistence is synchronous within `save()`.
+- `AltStore`'s account list is copy-on-write and `SecretStore`'s map is concurrent, because a login resolving on a pool thread mutates them while the host reads them from its render thread. `accounts()` is a live list, and iterating it during a login sees a snapshot rather than failing. Persistence is synchronous within `save()`, on whichever thread called it.
 
 ## Design rules
 

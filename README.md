@@ -6,12 +6,12 @@
 
 > Drop-in Minecraft account-manager core for Fabric mods: auth, encrypted local storage, and async player data, all host-agnostic.
 
-**lol.trq.alts** is a standalone, renderer-agnostic account-management library for Minecraft Fabric mods. It provides Microsoft, refresh-token, cookie, session, and offline login, an encrypted on-disk account store, async player-head and per-server game-stats caches, and a clean set of host seams, with no Minecraft or renderer types of its own.
+**lol.trq.alts** is a standalone, renderer-agnostic account-management library for Minecraft Fabric mods. It provides Microsoft, refresh-token, cookie, cookie-file, session, and offline login, an encrypted on-disk account store, async player-head and per-server game-stats caches, and a clean set of host seams, with no Minecraft or renderer types of its own.
 
 ## Features
 
-- **Five login methods.** Microsoft OAuth 2.0, OAuth refresh token, browser-cookie, session-token, and offline, all `CompletableFuture`-based behind a single `AltLoginService`. You supply your own Azure app client id for Microsoft login (`MicrosoftAuthConfig`); the library ships no shared default.
-- **Encrypted local store.** Accounts are persisted with AES-256-GCM and PBKDF2 in a host-chosen directory; the file never holds plaintext credentials at rest. Stored Microsoft sessions renew silently from their refresh token instead of expiring after roughly a day, so a saved account does not need a fresh browser round every time its access token lapses.
+- **Six login methods.** Microsoft OAuth 2.0, OAuth refresh token, browser-cookie text, an exported cookie file, session-token, and offline, all `CompletableFuture`-based behind a single `AltLoginService`. You supply your own Azure app client id for Microsoft login (`MicrosoftAuthConfig`); the library ships no shared default, and a *legacy MSA* application is a supported dialect via `MicrosoftAuthConfig.legacyMsa`.
+- **Encrypted local store.** Accounts are persisted with AES-256-GCM and PBKDF2 in a host-chosen directory; the file never holds plaintext credentials at rest. Stored Microsoft sessions renew silently from their refresh token instead of expiring after roughly a day, so a saved account does not need a fresh browser round every time its access token lapses. A file that exists but cannot be read is never mistaken for an empty store: it is reported on `AltStore.loadError()` and copied aside rather than overwritten.
 - **Zero-knowledge shared vault.** Share an alt repository between members with end-to-end encryption (Ed25519 identities, X25519-wrapped per-repo keys, AES-256-GCM payloads). The sync server stores only ciphertext, wrapped keys, public keys, and counters, so it can decrypt nothing. Refresh tokens are withheld from a shared repository unless its manifest opts in, because a refresh token grants durable account access rather than the day an access token buys.
 - **Federated.** Repositories are addressed `avp://host/repoId` and reachable across independently hosted servers using one portable identity, so different clients can share alts without a central server. The wire contract is the open [Alt Vault Protocol](https://github.com/trqlmao/avp).
 - **Async caches.** A small `AsyncCache<K,V>` primitive (lazy, non-blocking, stale-while-revalidate) powers player-head avatars and optional, server-agnostic game stats. A host registers a `GameStatsSource` per server and the card renders whatever stat chips it returns; the library never interprets them.
@@ -54,6 +54,8 @@ dependencies {
 
 ```java
 // 1. Wire the host seams once at startup. H is your renderer's texture-handle type.
+//    build() also reads whatever store is already on disk, so AltStore.accounts()
+//    is populated the moment it returns.
 AltsRuntime<MyHandle> alts = new AltsRuntime.Builder<MyHandle>()
         .sessionInjector(new MySessionInjector())   // install a SessionData as the live session
         .vaultDirectory(() -> myDataDir)             // where the encrypted account file lives
@@ -70,6 +72,10 @@ alts.loginService().loginMicrosoft(LoginMode.ADD)
 
 // Renew from a refresh token, no browser step.
 alts.loginService().loginRefreshToken(storedRefreshToken, LoginMode.ADD)
+        .thenAccept(result -> { /* result.success(), result.reason() */ });
+
+// Log in from a cookie file the user picked, read off the calling thread.
+alts.loginService().loginCookieFile(Path.of(chosenFile), LoginMode.ADD)
         .thenAccept(result -> { /* result.success(), result.reason() */ });
 ```
 
@@ -94,11 +100,15 @@ structured index of the docs in the [llmstxt.org](https://llmstxt.org) format, t
    store does not already hold, and withheld from a shared repository unless the manifest opts in.
    Keep those three properties when touching `AltAccount`, `AltStore`, or `SharedVault`.
 6. **Branch on `AltLoginCallback.FailureReason`, never on the message.** Messages change under
-   obfuscation and localization; the reason is the contract.
-7. **House style.** palantir-java-format (4-space, 120 column), full Javadoc on public and protected
+   obfuscation and localization; the reason is the contract. `NETWORK` means retry, `INVALID_TOKEN` and
+   `REAUTH_REQUIRED` mean the credential is the problem — keep any new route classifying the two apart.
+7. **An unreadable store is not an empty store.** `AltStore`/`SecretStore` never overwrite a file they
+   failed to read, and report why on `loadError()`. Preserve that whenever you touch persistence: the
+   key is machine-derived, so an ordinary environment change is enough to make a good file unreadable.
+8. **House style.** palantir-java-format (4-space, 120 column), full Javadoc on public and protected
    members with an `@since` on each new one. Run `./gradlew spotlessApply` before committing, and
    `./gradlew build` (JDK 25) to test.
-8. **Documentation snippets are compiled.** Every Java block in
+9. **Documentation snippets are compiled.** Every Java block in
    [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) is inlined from
    [`examples/`](examples/), which `check` compiles. Change the example first, then the guide.
 
@@ -132,7 +142,8 @@ This is an independent, community library. It is not affiliated with, endorsed b
 Mojang or Microsoft. "Minecraft" and related marks belong to their respective owners and are used here
 only to describe what the library interoperates with. The library is provided as is, without warranty of
 any kind, under the MIT license. How a consuming application obtains and uses accounts, and whether that
-complies with any service's terms or with applicable law, is the consumer's responsibility.
+complies with any service's terms or with applicable law, is the consumer's responsibility. Full text:
+[DISCLAIMER.md](DISCLAIMER.md).
 
 ## Activity
 
