@@ -63,7 +63,9 @@ spotless {
     java {
         // Palantir 4-space / 120-column house style.
         palantirJavaFormat('2.91.0').style('PALANTIR')
-        target 'src/**/*.java'
+        // Examples are held to the same style as the library: the guide inlines from them, so an
+        // unformatted example is an unformatted snippet in the docs.
+        target 'src/**/*.java', 'examples/**/*.java'
         targetExclude '**/build/**'
     }
 }
