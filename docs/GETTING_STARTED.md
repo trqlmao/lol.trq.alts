@@ -124,13 +124,41 @@ alts.loginService().loginCookieFile(chosen, LoginMode.ADD).thenAccept(result -> 
 
 The read runs off the calling thread, so this is safe to call straight from a file-picker callback on the
 render thread, and a file that is missing, is not a file, is larger than `CookieFile.MAX_BYTES`, or holds
-nothing comes back as an `INVALID_TOKEN` result rather than as a thrown exception.
+nothing comes back as an `INVALID_TOKEN` result rather than as a thrown exception. Failure messages name
+the file but never the path to it, because they end up in your UI and your log.
 
-Decoding honours a byte-order mark. A file redirected out of PowerShell is UTF-16LE, which read as UTF-8
-yields text interleaved with NUL bytes that no cookie parser recognises — a failure that reads to the user
-as "my cookies are bad" rather than "my file is in another encoding". If you collect cookie text some
-other way, `CookieFile.read(Path)` is public so you can reuse the size cap and the encoding handling
-without the login route. Compiled as `GettingStartedExample.logInFromCookieFile`.
+Three export shapes are recognised: the tab-separated **Netscape** format, the **JSON** array the common
+cookie-editor extensions write (including when it is nested under a wrapper key), and text that has been
+through a copy-paste and lost its structure. Decoding honours a byte-order mark — a file redirected out of
+PowerShell is UTF-16LE, which read as UTF-8 yields text interleaved with NUL bytes that no cookie parser
+recognises, a failure that reads to the user as "my cookies are bad" rather than "my file is in another
+encoding".
+
+If you collect cookie text some other way, `CookieFile.read(Path)` is public, so you can reuse the size
+cap and the encoding handling without the login route. Compiled as
+`GettingStartedExample.logInFromCookieFile`.
+
+### The picker is yours
+
+The library never opens a window. Choosing a file is a UI concern, and a UI concern is a host concern —
+one client wants a native OS dialog, another an in-game browser, another only drag-and-drop. All the
+library takes is a `Path`.
+
+What it does supply is the filter, so your picker and its parser agree:
+
+```java
+CookieFile.EXTENSIONS   // ["txt", "json", "cookies"], no leading dot
+```
+
+Two host-side patterns worth wiring, since a user reaches for whichever is in front of them:
+
+- **A picker button.** Open your platform's file dialog filtered on `CookieFile.EXTENSIONS`, then hand the
+  chosen path to `loginCookieFile`. Marshal back onto your main thread first if your dialog runs off it.
+- **Drag-and-drop.** Minecraft's `Screen` receives dropped files; pass the first one straight through. The
+  library validates it, so you do not have to.
+
+The extension list is advisory. `read` accepts any path, because a user who renamed their export is not
+wrong.
 
 ## Refresh tokens and silent renewal
 
