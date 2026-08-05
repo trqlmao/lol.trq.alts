@@ -8,7 +8,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
-import java.net.URL;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
@@ -147,8 +147,8 @@ public final class HttpUtil {
     private static JsonObject executeRequest(
             String urlString, String method, String contentType, Map<String, String> headers, byte[] body)
             throws Exception {
-        URL url = new URL(urlString);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        HttpURLConnection conn =
+                (HttpURLConnection) URI.create(urlString).toURL().openConnection();
         conn.setRequestMethod(method);
         applyDefaults(conn);
 
@@ -174,6 +174,7 @@ public final class HttpUtil {
 
         // Validation check for successful response codes (200-299)
         if (status < 200 || status >= 300) {
+            drainErrorBody(conn);
             return null;
         }
 
@@ -182,11 +183,28 @@ public final class HttpUtil {
         }
     }
 
+    /**
+     * Consumes and closes a rejected response's body. An error body left unread keeps its connection out
+     * of the keep-alive pool, so a run of failures — a rate limit, a service having a bad minute — opens
+     * a fresh socket every time instead of reusing one.
+     *
+     * @param conn the connection whose error body to discard
+     */
+    private static void drainErrorBody(HttpURLConnection conn) {
+        try (InputStream errors = conn.getErrorStream()) {
+            if (errors != null) {
+                errors.transferTo(OutputStream.nullOutputStream());
+            }
+        } catch (Exception ignored) {
+            // Draining is an optimization; failing to do it must never fail the request.
+        }
+    }
+
     private static HttpResponse executeForStatus(
             String urlString, String method, String contentType, Map<String, String> headers, byte[] body)
             throws Exception {
-        URL url = new URL(urlString);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        HttpURLConnection conn =
+                (HttpURLConnection) URI.create(urlString).toURL().openConnection();
         conn.setRequestMethod(method);
         applyDefaults(conn);
 

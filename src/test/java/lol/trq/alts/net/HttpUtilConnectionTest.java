@@ -12,7 +12,7 @@ import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.URL;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -60,7 +60,8 @@ class HttpUtilConnectionTest {
 
     @Test
     void everyConnectionCarriesFiniteTimeoutsAndRefusesRedirects() throws Exception {
-        HttpURLConnection conn = (HttpURLConnection) new URL("http://127.0.0.1:1/unused").openConnection();
+        HttpURLConnection conn = (HttpURLConnection)
+                URI.create("http://127.0.0.1:1/unused").toURL().openConnection();
 
         HttpUtil.applyDefaults(conn);
 
