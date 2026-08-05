@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `AltLoginService.loginCookieFile(Path, LoginMode)`, for authenticating from an exported cookie file
+  rather than pasted text. Browser extensions produce cookie exports as files, and the Netscape format
+  they use is line-oriented, so pasting one through a single-line input mangles it. Reading is
+  byte-order-mark aware: a file redirected out of PowerShell is UTF-16LE, which decoded as UTF-8 yields
+  text interleaved with NUL bytes that no parser recognises, and the resulting failure reads as "my
+  cookies are bad" rather than "my file is in another encoding". The read runs off the calling thread
+  and an unreadable file fails as an `INVALID_TOKEN` result rather than throwing, so a host can hand
+  over a path straight from a file picker on its render thread.
+- `CookieFile`, the reader behind that route. Public so a host that collects cookie text its own way
+  can reuse the size cap and the encoding handling.
 - `MicrosoftAuthConfig.legacyMsa(String)`, for authenticating against a *legacy MSA* application
   rather than an Azure OAuth one. The two are different dialects of the same flow and the library
   previously spoke only the OAuth one, so a refresh token issued to a legacy app could not be

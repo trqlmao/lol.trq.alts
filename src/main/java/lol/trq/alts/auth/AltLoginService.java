@@ -1,5 +1,6 @@
 package lol.trq.alts.auth;
 
+import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
 import lol.trq.alts.model.AltAccount;
 import lol.trq.alts.model.LoginMode;
@@ -31,6 +32,18 @@ public interface AltLoginService {
      * @return a future containing the result of the login attempt
      */
     CompletableFuture<AltLoginCallback.LoginResult> loginCookie(String cookieData, LoginMode mode);
+
+    /**
+     * Authenticates using cookies exported to a file, which is the shape browser extensions produce
+     * them in. The file is read off the calling thread; decoding and parsing are handled for the
+     * caller, so a host only has to supply a path.
+     *
+     * @param file the exported cookie file, in Netscape or mangled format
+     * @param mode the login mode
+     * @return a future containing the result of the login attempt
+     * @since 0.7.0
+     */
+    CompletableFuture<AltLoginCallback.LoginResult> loginCookieFile(Path file, LoginMode mode);
 
     /**
      * Authenticates using a pre-existing Minecraft access token or session string.

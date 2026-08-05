@@ -1,12 +1,15 @@
 package lol.trq.alts.auth;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.util.Base64;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import lol.trq.alts.auth.AltLoginCallback.FailureReason;
@@ -154,6 +157,38 @@ public class AltLoginServiceImpl implements AltLoginService {
                         "Cookie Auth: " + (msg != null ? msg : "Unknown error"), FailureReason.INVALID_TOKEN);
             }
         });
+    }
+
+    /**
+     * Authenticates using cookies read from a file. The read runs off the calling thread so a host can
+     * hand over a path straight from a file picker on its render thread, and a file that cannot be read
+     * fails the same way bad cookie text does rather than throwing at the caller.
+     *
+     * @param file the exported cookie file
+     * @param mode the login mode
+     * @return a future containing the result of the login attempt
+     * @since 0.7.0
+     */
+    @Override
+    public CompletableFuture<AltLoginCallback.LoginResult> loginCookieFile(Path file, LoginMode mode) {
+        if (file == null) {
+            return CompletableFuture.completedFuture(
+                    AltLoginCallback.LoginResult.failure("No cookie file given", FailureReason.INVALID_TOKEN));
+        }
+        return CompletableFuture.supplyAsync(() -> {
+                    try {
+                        return CookieFile.read(file);
+                    } catch (IOException e) {
+                        throw new CompletionException(e);
+                    }
+                })
+                .thenCompose(cookieData -> loginCookie(cookieData, mode))
+                .exceptionally(ex -> {
+                    Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+                    return AltLoginCallback.LoginResult.failure(
+                            "Cookie file: " + (cause.getMessage() != null ? cause.getMessage() : "could not be read"),
+                            FailureReason.INVALID_TOKEN);
+                });
     }
 
     /**
