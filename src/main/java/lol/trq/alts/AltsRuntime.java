@@ -56,6 +56,11 @@ public final class AltsRuntime<H> {
         SecretStore.configure(builder.secretsFileName, builder.secretsKeyBinding);
         AltsToasts.bind(builder.toastSink);
 
+        // Read what is already on disk here, so a host never has to know that binding and loading are two
+        // steps. Both are safe to repeat: each clears its in-memory state before refilling it.
+        AltStore.load();
+        SecretStore.load();
+
         this.toasts = builder.toastSink;
         this.vaultResolver = builder.vaultTransportResolver;
         this.loginService = new AltLoginServiceImpl(builder.sessionInjector, builder.microsoftAuth);
@@ -313,7 +318,10 @@ public final class AltsRuntime<H> {
         }
 
         /**
-         * Validates the required seams and constructs the runtime, binding the static helpers.
+         * Validates the required seams, constructs the runtime, binds the static helpers, and loads any
+         * store already on disk — so {@link AltStore#accounts()} is populated as soon as this returns.
+         * A file that exists but cannot be read leaves the list alone and is reported on
+         * {@link AltStore#loadError()}.
          *
          * @return the constructed runtime
          * @throws NullPointerException if a required seam is missing
