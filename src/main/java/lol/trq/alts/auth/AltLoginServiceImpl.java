@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.Base64;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -76,15 +77,21 @@ public class AltLoginServiceImpl implements AltLoginService {
                 if (fastResult.isPresent()) return fastResult.get();
             }
 
-            // Fallback: perform an API request to validate the token and get profile data
+            // Fallback: perform an API request to validate the token and get profile data. A refusal and
+            // an unreachable service are different answers — one means the token is spent, the other says
+            // nothing about it — so they are classified apart, as the stored-account route does.
+            String[] profile;
             try {
-                String[] profile = AccountNetworkUtil.fetchProfileFromToken(cleanToken, profileUrl());
-                if (profile == null) throw new Exception("Invalid token or session expired");
-                return finalizeLogin(profile[0], profile[1], cleanToken, AccountType.SESSION, mode);
-            } catch (Exception e) {
+                profile = AccountNetworkUtil.fetchProfileFromToken(cleanToken, profileUrl());
+            } catch (Exception unreachable) {
                 return AltLoginCallback.LoginResult.failure(
-                        "Login failed: " + e.getMessage(), FailureReason.INVALID_TOKEN);
+                        "Login failed: " + unreachable.getMessage(), FailureReason.NETWORK);
             }
+            if (profile == null) {
+                return AltLoginCallback.LoginResult.failure(
+                        "Invalid token or session expired", FailureReason.INVALID_TOKEN);
+            }
+            return finalizeLogin(profile[0], profile[1], cleanToken, AccountType.SESSION, mode);
         });
     }
 
@@ -99,7 +106,7 @@ public class AltLoginServiceImpl implements AltLoginService {
     public CompletableFuture<AltLoginCallback.LoginResult> loginOffline(String name, LoginMode mode) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                String cleanName = name.trim().replaceAll("[^a-zA-Z0-9_]", "");
+                String cleanName = name == null ? "" : name.trim().replaceAll("[^a-zA-Z0-9_]", "");
                 if (cleanName.isEmpty() || cleanName.length() > 16) {
                     return AltLoginCallback.LoginResult.failure(
                             "Invalid username length (1-16 chars)", FailureReason.INVALID_TOKEN);
@@ -478,12 +485,6 @@ public class AltLoginServiceImpl implements AltLoginService {
     }
 
     /**
-     * Sanitizes a token string by removing prefixes and whitespace.
-     *
-     * @param t the raw token
-     * @return the sanitized token
-     */
-    /**
      * Sanitizes a pasted refresh token. Tokens are routinely copied out of account lists that prefix
      * them with a name (`user:token`) or out of an HTTP header, and the surrounding text is invisible
      * in a password-style input. Left in place it is sent to the token endpoint as part of the
@@ -501,7 +502,7 @@ public class AltLoginServiceImpl implements AltLoginService {
         if (t.length() >= 2 && ((t.startsWith("\"") && t.endsWith("\"")) || (t.startsWith("'") && t.endsWith("'")))) {
             t = t.substring(1, t.length() - 1).trim();
         }
-        if (t.toLowerCase().startsWith("bearer ")) {
+        if (t.toLowerCase(Locale.ROOT).startsWith("bearer ")) {
             t = t.substring(7).trim();
         }
         if (t.contains(":")) {
@@ -514,12 +515,19 @@ public class AltLoginServiceImpl implements AltLoginService {
         return t;
     }
 
+    /**
+     * Sanitizes a pasted session token by selecting the JWT out of any surrounding text and dropping a
+     * bearer prefix.
+     *
+     * @param t the raw token
+     * @return the sanitized token
+     */
     private String cleanToken(String t) {
         t = t.trim();
         if (t.contains(":")) {
             for (String p : t.split(":")) if (p.startsWith("eyJ")) return p;
         }
-        return t.toLowerCase().startsWith("bearer ") ? t.substring(7).trim() : t;
+        return t.toLowerCase(Locale.ROOT).startsWith("bearer ") ? t.substring(7).trim() : t;
     }
 
     /**
