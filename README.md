@@ -83,9 +83,12 @@ See [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) for a full walkthrough an
 
 ## For AI agents
 
-If you are an AI coding agent working on or with this library, start from [`llms.txt`](llms.txt), a
-structured index of the docs in the [llmstxt.org](https://llmstxt.org) format, then read
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The points most often gotten wrong:
+This repository is structured for you. Start with [`CLAUDE.md`](CLAUDE.md) — the mental model, the
+patterns that matter, and the pitfalls — then [`llms.txt`](llms.txt), a structured index of the docs and
+core source in the [llmstxt.org](https://llmstxt.org) format, then [`examples/`](examples/) for working
+code. [`AGENTS.md`](AGENTS.md) is the condensed form of the same rules.
+
+The points most often gotten wrong:
 
 1. **Consumer-agnostic, always.** Never name a specific consuming mod, client, product, or sponsor in
    source, comments, docs, or commit messages. Keep examples generic (`your mod`, `the host`).
