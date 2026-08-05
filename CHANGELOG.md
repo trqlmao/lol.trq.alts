@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-05
+
+A login route, a second Microsoft dialect, and a durability pass over the local stores after a full audit
+of the library.
+
 ### Added
 
 - `AltLoginService.loginCookieFile(Path, LoginMode)`, for authenticating from an exported cookie file
@@ -19,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   over a path straight from a file picker on its render thread.
 - `CookieFile`, the reader behind that route. Public so a host that collects cookie text its own way
   can reuse the size cap and the encoding handling.
+- **JSON cookie exports are parsed.** The common cookie-editor extensions write an array of
+  `{name, value, domain, ...}` objects rather than the Netscape format, and some nest it under a wrapper
+  key. That shape previously fell through to the mangled-text parser, which found the cookie names it
+  knows and took the surrounding JSON as their values — producing a header the service rejected and a
+  failure that read as bad cookies rather than an unread export. The tree is now walked (to a bounded
+  depth), so any wrapper shape works.
+- `CookieFile.EXTENSIONS`, the extensions a cookie export normally carries, so a host's file picker and
+  this parser agree on what to offer. Advisory only: `read` accepts any path.
 - `MicrosoftAuthConfig.legacyMsa(String)`, for authenticating against a *legacy MSA* application
   rather than an Azure OAuth one. The two are different dialects of the same flow and the library
   previously spoke only the OAuth one, so a refresh token issued to a legacy app could not be
@@ -29,6 +42,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   credential minted by a legacy application now has a way to redeem it.
 - `MicrosoftAuthConfig.withClientId(String)`, to retarget a config at another application while
   keeping its dialect and endpoints.
+- `AltStore.loadError()` and `SecretStore.loadError()` — why the last load could not read an existing
+  file, so a host can tell the user their accounts did not load instead of showing them an empty list.
+  The two states were previously indistinguishable from the outside.
+
+### Fixed
+
+- **A store that fails to load is no longer overwritten with an empty one.** `load()` swallowed every
+  failure and left an empty list, and the next `save()` — which any login triggers — wrote that empty
+  list straight over the file. The encryption key is derived from machine properties, so a renamed OS
+  user or a moved home directory was enough to reach this, and every stored account was then gone with
+  no way back. A failed load now leaves the in-memory collection alone, reports itself on `loadError()`,
+  and the file is copied aside to `<name>.unreadable` before any save can replace it. The copy is made
+  once, so a second failure cannot overwrite the backup that holds the data, and a save that cannot make
+  the copy is skipped rather than allowed to destroy the original. Applies to both `AltStore` and
+  `SecretStore`.
+- **The stores are safe to touch off-thread.** The account list was a plain `ArrayList` and the secret
+  map a `LinkedHashMap`, both mutated from whichever pool thread a login resolved on while the host reads
+  them from its render thread. They are now copy-on-write and concurrent respectively, so iterating
+  `accounts()` during a login sees a snapshot instead of failing.
+- **`AltStore.removeAccount` keys on the UUID** like every other mutator, rather than on whole-record
+  equality plus a reference comparison for the current account. Since `AltAccount` is a record, its
+  equality covers the credentials too, so a caller holding a copy read before a renewal rotated its
+  tokens — the normal case — silently removed nothing.
+- **The session route separates a refused token from an unreachable service.** `loginSession` collapsed
+  every failure onto `INVALID_TOKEN`, so an outage was reported as a spent credential and a host
+  following the documented advice to branch on the reason sent the user through a fresh interactive
+  login to fix a network problem. It now reports `NETWORK` for a transport failure, matching what
+  `loginAccount` already did.
+- **The authorization code is decoded before it is redeemed.** The callback server matches the raw query
+  string, so the captured code and state were still percent-encoded; the token exchange then encoded
+  every parameter it sent, escaping those escapes and redeeming a value the service never issued.
+  Current codes happen to be URL-safe, so this had not yet bitten.
+- **A rejected HTTP response has its body drained.** An unread error body keeps its connection out of the
+  keep-alive pool, so a run of rejections — a rate limit, a service having a bad minute — opened a fresh
+  socket every time.
+- **The cookie file's size cap binds the read itself**, rather than a size check taken before it. Reading
+  a file to find out it was too big is the thing the cap exists to prevent, and a file that grew between
+  the check and the read slipped it entirely. The read now stops one byte past the limit.
+- **A cookie-file failure names the file, never the path to it.** The JDK's I/O messages are the absolute
+  path, and this message travels into a `LoginResult` a host shows in its UI and writes to its log, so an
+  access-denied on an export under a home directory published that directory.
+- A null username handed to `loginOffline` reports `INVALID_TOKEN` rather than `UNKNOWN`, and
+  `cleanToken` has its Javadoc back after it was orphaned by the refresh-token cleaner landing above it.
+
+### Security
+
+- **The OAuth state can no longer fall back to a guessable value.** `generateState` answered a
+  `SecureRandom.getInstanceStrong()` failure with `"fallback-state-" + currentTimeMillis()`, which
+  defeats the CSRF check the state exists to make: an attacker who can guess the state can feed the
+  loopback callback a code of their choosing. `getInstanceStrong` also maps to a blocking entropy source
+  on some platforms, so the failure it guards against is real rather than theoretical. The default
+  `SecureRandom` is used instead — cryptographically strong, non-blocking, and unable to fail to
+  construct, so there is nothing to fall back from.
+- The browser fallback passes its URL as a discrete argument rather than as one command line, which
+  `Runtime.exec` splits on whitespace.
+- `SECURITY.md` now states the threat model explicitly. The local store's PBKDF2 password is derived from
+  machine properties, not from a user secret: it stops a copied file being read on another machine, and
+  does nothing against code already running as the same user. That was true before and is now written
+  down, along with the shared vault's two documented boundaries.
 
 ### Changed
 
@@ -36,6 +108,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   previous behaviour — no redirect on the refresh grant, a `d=` ticket — so an OAuth host sees no
   change on the wire. Hosts calling the canonical constructor rather than `of(...)` must pass the two
   new arguments.
+- **`AltsRuntime.Builder.build()` now loads both stores.** It bound the directory provider and configured
+  the filename but never read the file, so a host that followed the getting-started guide wired
+  everything correctly and still saw an empty account list — the extra call it needed was documented
+  nowhere. A host already calling `AltStore.load()` itself is unaffected, since a load clears its
+  in-memory state before refilling it.
 
 ## [0.6.2] - 2026-07-28
 
