@@ -5,6 +5,7 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
@@ -126,8 +127,12 @@ public class MicrosoftCallbackServer {
 
             if (!codeMatcher.find() || !stateMatcher.find()) throw new Exception("Invalid params");
 
-            String code = codeMatcher.group(1);
-            String state = stateMatcher.group(1);
+            // The captures are still percent-encoded, because the raw query is matched rather than a
+            // parsed one. Decoding here is what makes the code the credential the token endpoint expects:
+            // the exchange encodes every parameter it sends, so handing it an encoded code would escape
+            // the escapes and redeem a value the service never issued.
+            String code = URLDecoder.decode(codeMatcher.group(1), StandardCharsets.UTF_8);
+            String state = URLDecoder.decode(stateMatcher.group(1), StandardCharsets.UTF_8);
 
             // Verify state to ensure the response matches the request sent by the client
             if (!expectedState.equals(state)) throw new Exception("State mismatch");
