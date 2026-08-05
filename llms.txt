@@ -16,6 +16,7 @@ Notes for implementers: the library never imports a host type, and it must never
 - [Agent guide](https://raw.githubusercontent.com/trqlmao/lol.trq.alts/main/CLAUDE.md): The mental model, the patterns that matter, and the pitfalls, written for coding agents.
 - [Examples](https://raw.githubusercontent.com/trqlmao/lol.trq.alts/main/examples/README.md): The compiled samples the guide inlines from.
 - [Refresh-token design](https://raw.githubusercontent.com/trqlmao/lol.trq.alts/main/docs/specs/2026-07-28-refresh-token-auth.md): Why renewal, the sharing policy, and the typed failure reason are shaped the way they are.
+- [Alt-management surface design](https://raw.githubusercontent.com/trqlmao/lol.trq.alts/main/docs/specs/2026-08-05-alt-management-surface.md): Proposed — per-account proxies, operating on an account without logging into it, current identity and UUID-keyed avatars, entitlement as an outcome, bulk operations, and device-code login.
 - [Changelog](https://raw.githubusercontent.com/trqlmao/lol.trq.alts/main/CHANGELOG.md): Release history.
 
 ## Core source
