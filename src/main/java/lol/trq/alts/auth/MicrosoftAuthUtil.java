@@ -3,10 +3,12 @@ package lol.trq.alts.auth;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import java.awt.Desktop;
+import java.io.Serial;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -83,6 +85,10 @@ public final class MicrosoftAuthUtil {
      * Attempts to open the system's default web browser to the specified URL. Falls back to
      * OS-specific terminal commands if the Java Desktop API is unavailable.
      *
+     * <p>The fallback passes the URL as a discrete argument rather than as one command line. The string
+     * form of {@code exec} splits on whitespace, so a URL carrying any — from a host-supplied endpoint
+     * or scope — would be handed to the launcher as several arguments and open the wrong thing.
+     *
      * @param authUrl the Microsoft OAuth URL to open
      */
     public static void openBrowser(String authUrl) {
@@ -97,11 +103,15 @@ public final class MicrosoftAuthUtil {
 
         if (!opened) {
             try {
-                String os = System.getProperty("os.name").toLowerCase();
+                String os = System.getProperty("os.name").toLowerCase(Locale.ROOT);
                 Runtime rt = Runtime.getRuntime();
-                if (os.contains("win")) rt.exec("rundll32 url.dll,FileProtocolHandler " + authUrl);
-                else if (os.contains("mac")) rt.exec("open " + authUrl);
-                else if (os.contains("nix") || os.contains("nux")) rt.exec("xdg-open " + authUrl);
+                if (os.contains("win")) {
+                    rt.exec(new String[] {"rundll32", "url.dll,FileProtocolHandler", authUrl});
+                } else if (os.contains("mac")) {
+                    rt.exec(new String[] {"open", authUrl});
+                } else if (os.contains("nix") || os.contains("nux")) {
+                    rt.exec(new String[] {"xdg-open", authUrl});
+                }
             } catch (Exception ignored) {
             }
         }
@@ -110,20 +120,21 @@ public final class MicrosoftAuthUtil {
     /**
      * Generates a cryptographically secure random state string to prevent CSRF.
      *
+     * <p>{@link SecureRandom#getInstanceStrong()} is deliberately not used: it maps to a blocking
+     * entropy source on some platforms, and its documented failure mode is an exception — which a
+     * guessable fallback would answer by defeating the very check the state exists to make. The default
+     * {@code SecureRandom} is cryptographically strong, never blocks, and cannot fail to construct.
+     *
      * @return a random alphanumeric string
      */
     private static String generateState() {
-        try {
-            SecureRandom random = SecureRandom.getInstanceStrong();
-            int length = random.nextInt(96, 128);
-            StringBuilder sb = new StringBuilder(length);
-            for (int i = 0; i < length; i++) {
-                sb.append(STATE_CHARS.charAt(random.nextInt(STATE_CHARS.length())));
-            }
-            return sb.toString();
-        } catch (Exception e) {
-            return "fallback-state-" + System.currentTimeMillis();
+        SecureRandom random = new SecureRandom();
+        int length = random.nextInt(96, 128);
+        StringBuilder sb = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            sb.append(STATE_CHARS.charAt(random.nextInt(STATE_CHARS.length())));
         }
+        return sb.toString();
     }
 
     /**
@@ -146,12 +157,9 @@ public final class MicrosoftAuthUtil {
                         URLEncoder.encode(config.scope(), StandardCharsets.UTF_8));
                 JsonObject response = HttpUtil.postForm(config.tokenUrl(), null, body);
                 if (response == null) throw new Exception("Token exchange failed");
-                long expiresIn =
-                        response.has("expires_in") ? response.get("expires_in").getAsLong() : 0L;
                 return new MsTokens(
                         response.get("access_token").getAsString(),
-                        response.get("refresh_token").getAsString(),
-                        expiresIn);
+                        response.get("refresh_token").getAsString());
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -195,8 +203,7 @@ public final class MicrosoftAuthUtil {
             JsonObject json = response.body();
             String rotated =
                     json.has("refresh_token") ? json.get("refresh_token").getAsString() : refreshToken;
-            long expiresIn = json.has("expires_in") ? json.get("expires_in").getAsLong() : 0L;
-            return new MsTokens(json.get("access_token").getAsString(), rotated, expiresIn);
+            return new MsTokens(json.get("access_token").getAsString(), rotated);
         });
     }
 
@@ -368,6 +375,9 @@ public final class MicrosoftAuthUtil {
      */
     public static final class RefreshRejectedException extends RuntimeException {
 
+        @Serial
+        private static final long serialVersionUID = 1L;
+
         /**
          * Whether the refresh token is permanently spent.
          *
@@ -411,8 +421,10 @@ public final class MicrosoftAuthUtil {
         }
     }
 
-    /** Holds the Microsoft OAuth access and refresh tokens together with the access token's lifetime. */
-    private record MsTokens(String accessToken, String refreshToken, long expiresIn) {}
+    // The Microsoft token's own lifetime is deliberately absent: the expiry that matters downstream is
+    // the Minecraft services token's, which lasts far longer and is what the account is stamped with.
+    /** Holds the Microsoft OAuth access and refresh tokens. */
+    private record MsTokens(String accessToken, String refreshToken) {}
 
     /** Holds the Minecraft services session token and its advertised lifetime in seconds. */
     private record McSession(String accessToken, long expiresIn) {}
