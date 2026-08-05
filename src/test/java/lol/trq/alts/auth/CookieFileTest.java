@@ -101,4 +101,48 @@ class CookieFileTest {
 
         assertTrue(thrown.getMessage().contains("too large"), thrown.getMessage());
     }
+
+    /**
+     * The cap has to bind the read, not a stat taken before it. Reading a huge file to find out it was
+     * huge is the thing the cap exists to prevent, and a file that grew between the two would slip it.
+     */
+    @Test
+    void readsNoMoreThanOneByteBeyondTheCap() throws IOException {
+        Path file = write("huge.txt", new byte[(int) CookieFile.MAX_BYTES * 2]);
+
+        IOException thrown = assertThrows(IOException.class, () -> CookieFile.read(file));
+
+        assertTrue(thrown.getMessage().contains("too large"), thrown.getMessage());
+    }
+
+    /**
+     * Every failure message reaches a {@code LoginResult} that a host shows in its UI and writes to its
+     * log. The JDK's own I/O messages are the absolute path, so an unreadable file under a home directory
+     * would publish that directory unless the message is rebuilt from the file name alone.
+     */
+    @Test
+    void aFailureNamesTheFileAndNeverThePathToIt() {
+        Path absent = dir.resolve("absent.txt");
+
+        IOException thrown = assertThrows(IOException.class, () -> CookieFile.read(absent));
+
+        assertTrue(thrown.getMessage().contains("absent.txt"), thrown.getMessage());
+        assertFalse(
+                thrown.getMessage().contains(dir.toString()),
+                "the containing directory must not travel into a message: " + thrown.getMessage());
+    }
+
+    @Test
+    void aDirectoryIsRejectedAsNotAFileRatherThanAsMissing() {
+        IOException thrown = assertThrows(IOException.class, () -> CookieFile.read(dir));
+
+        assertTrue(thrown.getMessage().contains("not a file"), thrown.getMessage());
+    }
+
+    @Test
+    void theAdvertisedExtensionsCoverWhatExportersActuallyWrite() {
+        assertTrue(CookieFile.EXTENSIONS.contains("txt"), "the Netscape export");
+        assertTrue(CookieFile.EXTENSIONS.contains("json"), "the cookie-editor export");
+        assertFalse(CookieFile.EXTENSIONS.isEmpty());
+    }
 }

@@ -1,6 +1,8 @@
 package lol.trq.alts.auth;
 
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
@@ -72,18 +74,103 @@ public final class CookieAuthUtil {
         return getMinecraftProfile(mcToken);
     }
 
+    /** How deep a JSON export is walked before it is treated as hostile rather than merely nested. */
+    private static final int MAX_JSON_DEPTH = 32;
+
     /**
-     * High-level entry point for parsing cookie data from an ambiguous string.
+     * High-level entry point for parsing cookie data from an ambiguous string. Three shapes are
+     * recognised, in the order a real export is cheapest to identify: a JSON array or object, the
+     * tab-separated Netscape format, and text that has been through a copy-paste and lost its structure.
+     *
+     * <p>Package-private so the shapes can be tested without a network round.
      *
      * @param cookieData the input string
      * @return a formatted HTTP Cookie header string
      */
-    private static String parseCookies(String cookieData) {
+    static String parseCookies(String cookieData) {
+        String trimmed = cookieData.trim();
+        if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+            String json = parseJsonCookies(trimmed);
+            if (!json.isEmpty()) return json;
+        }
         if (cookieData.contains("\n") && cookieData.split("\n").length > 3) {
             String result = parseDelimitedCookies(cookieData);
             if (!result.isEmpty()) return result;
         }
         return parseMangledCookies(cookieData);
+    }
+
+    /**
+     * Parses the JSON export the common cookie-editor extensions produce: an array of objects each
+     * carrying at least a {@code name} and a {@code value}. Wrappers vary — some tools nest the array
+     * under a key, some export one object per domain — so the tree is walked rather than assumed.
+     *
+     * <p>Without this, a JSON export fell through to the mangled parser, which found the cookie names it
+     * knows and took the rest of the surrounding JSON as their values. That produced a Cookie header the
+     * service rejected, and a failure that read as bad cookies rather than an unread file.
+     *
+     * @param data the trimmed JSON text
+     * @return a formatted HTTP Cookie header string, or empty if the text held no cookie objects
+     */
+    private static String parseJsonCookies(String data) {
+        StringBuilder builder = new StringBuilder();
+        try {
+            collectJsonCookies(JsonParser.parseString(data), builder, 0);
+        } catch (RuntimeException notJson) {
+            return "";
+        }
+        return builder.toString().trim();
+    }
+
+    /**
+     * Walks a parsed export, appending every object that looks like a cookie.
+     *
+     * @param element the element to walk
+     * @param out the header being built
+     * @param depth the current nesting depth
+     */
+    private static void collectJsonCookies(JsonElement element, StringBuilder out, int depth) {
+        if (element == null || depth > MAX_JSON_DEPTH) {
+            return;
+        }
+        if (element.isJsonArray()) {
+            for (JsonElement child : element.getAsJsonArray()) {
+                collectJsonCookies(child, out, depth + 1);
+            }
+            return;
+        }
+        if (!element.isJsonObject()) {
+            return;
+        }
+
+        JsonObject object = element.getAsJsonObject();
+        String name = stringField(object, "name");
+        String value = stringField(object, "value");
+        if (name != null && value != null) {
+            if (isValidCookie(name)) {
+                out.append(name).append("=").append(value).append("; ");
+            }
+            return;
+        }
+        for (Map.Entry<String, JsonElement> entry : object.entrySet()) {
+            collectJsonCookies(entry.getValue(), out, depth + 1);
+        }
+    }
+
+    /**
+     * Reads a string member, treating a missing, null, or non-string value as absent.
+     *
+     * @param object the object to read from
+     * @param key the member name
+     * @return the string value, or null
+     */
+    private static String stringField(JsonObject object, String key) {
+        JsonElement element = object.get(key);
+        return element != null
+                        && element.isJsonPrimitive()
+                        && element.getAsJsonPrimitive().isString()
+                ? element.getAsString()
+                : null;
     }
 
     /**

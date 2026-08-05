@@ -1,10 +1,14 @@
 package lol.trq.alts.auth;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -31,10 +35,27 @@ public final class CookieFile {
      */
     public static final long MAX_BYTES = 1L << 20;
 
+    /**
+     * The extensions cookie exports normally carry, without a leading dot, for a host building a file
+     * picker's filter. Advisory only — {@link #read(Path)} accepts any path, because a user who renamed
+     * their export is not wrong. Ordered most to least common.
+     *
+     * @since 0.7.0
+     */
+    public static final List<String> EXTENSIONS = List.of("txt", "json", "cookies");
+
+    /** Label used when a path has no file name of its own, so no absolute path reaches a message. */
+    private static final String UNNAMED = "cookie file";
+
     private CookieFile() {}
 
     /**
      * Reads {@code file} as cookie text.
+     *
+     * <p>Every failure is reported against the file's <em>name</em> only. The JDK's own I/O messages are
+     * the absolute path, and this message travels into a {@code LoginResult} a host shows in its UI and
+     * writes to its log, so an access-denied on a file under a home directory would otherwise publish
+     * that directory.
      *
      * @param file the file to read
      * @return the file's text content, byte-order mark stripped
@@ -44,27 +65,70 @@ public final class CookieFile {
     public static String read(Path file) throws IOException {
         Objects.requireNonNull(file, "file");
 
-        String name = file.getFileName() == null
-                ? file.toString()
-                : file.getFileName().toString();
+        String name = displayName(file);
 
-        if (!Files.exists(file)) {
-            throw new IOException(name + ": no such file");
-        }
+        // isRegularFile answers both questions at once, and answers them false for a directory, a device,
+        // a named pipe, and anything else that would otherwise be opened and read until it felt like
+        // stopping. A symlink to a regular file is followed, which is what a user picking one intends.
         if (!Files.isRegularFile(file)) {
-            throw new IOException(name + ": not a file");
+            throw new IOException(name + (Files.exists(file) ? ": not a file" : ": no such file"));
         }
 
-        long size = Files.size(file);
-        if (size > MAX_BYTES) {
-            throw new IOException(name + ": too large (max " + (MAX_BYTES / 1024) + " KiB)");
-        }
-
-        String text = decode(Files.readAllBytes(file));
+        String text = decode(readCapped(file, name));
         if (text.isBlank()) {
             throw new IOException(name + ": file is empty");
         }
         return text;
+    }
+
+    /**
+     * Reads at most one byte past the cap, so the limit binds the read itself. Checking the size first
+     * and reading afterwards would only bind a file that holds still between the two.
+     *
+     * @param file the file to read
+     * @param name the file's display name, for the failure message
+     * @return the file's bytes
+     * @throws IOException if the file is over the cap or cannot be read
+     */
+    private static byte[] readCapped(Path file, String name) throws IOException {
+        byte[] bytes;
+        try (InputStream in = Files.newInputStream(file)) {
+            bytes = in.readNBytes((int) MAX_BYTES + 1);
+        } catch (IOException unreadable) {
+            throw new IOException(name + ": " + reason(unreadable), unreadable);
+        }
+        if (bytes.length > MAX_BYTES) {
+            throw new IOException(name + ": too large (max " + (MAX_BYTES / 1024) + " KiB)");
+        }
+        return bytes;
+    }
+
+    /**
+     * Describes a read failure without naming a path.
+     *
+     * @param failure the failure to describe
+     * @return a short, path-free reason
+     */
+    private static String reason(IOException failure) {
+        if (failure instanceof AccessDeniedException) {
+            return "access denied";
+        }
+        if (failure instanceof NoSuchFileException) {
+            return "no such file";
+        }
+        return "could not be read";
+    }
+
+    /**
+     * Returns the file's own name, never a path. A path with no file name — a bare root — has no name to
+     * show, and printing the path instead would be exactly the leak this avoids.
+     *
+     * @param file the file being read
+     * @return the file name, or a generic label
+     */
+    private static String displayName(Path file) {
+        Path name = file.getFileName();
+        return name == null ? UNNAMED : name.toString();
     }
 
     /**
