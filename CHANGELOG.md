@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-06
+
+The full post-login account surface — everything an account owner can do to their own account through
+the public Minecraft services. The bulk of the
+[1.0.0 design](docs/specs/2026-08-06-account-management-1.0.md), shipped ahead of the freeze so the
+freeze itself, and the one sensitive route it holds back, are a decision made deliberately rather than
+in passing.
+
+### Added
+
+- **A new `account/` package**, reached as `alts.accountServices(account)`. Focused single-job services
+  built over one live token, each holdable on its own, none of which install a session or touch the
+  store:
+  - **`ProfileService`** — the full profile read (`PlayerProfile`): name, UUID, skins, capes, and pending
+    `profileActions`. The slim name-and-UUID read the auth chain does stays internal.
+  - **`EntitlementService`** — `Entitlements`, the product *set* rather than a boolean, with
+    `ownsJava()` / `ownsJavaOutright()` / `viaGamePass()` / `ownsBedrock()`. An account that owns Java is
+    told from one entitled only through a Game Pass that can lapse — the distinction an alt manager cares
+    about and a boolean throws away.
+  - **`NameService`** — `checkAvailability`, `eligibility` (whether a change is allowed now, and the
+    account's creation time), `change` (classified: a 400 invalid name told from a 403 cooldown from a
+    404 no-entitlement, error body read for the reason), and `claimAt` — a scheduled claim that fires a
+    bounded burst of change attempts around a target instant and stops on the first success.
+  - **`SkinService`** — set from a URL, upload from bytes, reset, with the classic/slim model.
+  - **`CapeService`** — show a cape, hide it, list owned.
+- **A new `time/` package** — `TimeSource` (the corrected-clock seam the scheduled claim reads),
+  `SystemTimeSource` (default), and `NtpTimeSource` (a minimal one-round-trip SNTP client, for a claim
+  that needs the sub-second edge). The claim's drop time is an input a host reads off wherever names are
+  listed; the library claims at the time it is given and does not monitor for one.
+- **`XstsError`** — the Xbox `XErr` codes decoded (`NO_XBOX_ACCOUNT`, `REGION_BLOCKED`,
+  `ADULT_VERIFICATION_REQUIRED`, `CHILD_ACCOUNT`, …). A `MicrosoftAuthUtil.XstsAuthException` carries the
+  classified reason, so an account that just needs a one-time Xbox sign-in stops surfacing as a bare
+  "Xbox auth failed".
+- `net/Multipart` (the skin upload's body) and `HttpUtil.sendForStatus` / `postJsonForStatus` (the
+  PUT/DELETE and status-returning JSON the account mutations need).
+
+### Notes
+
+The account services are additive — a host that does not call `accountServices(...)` is unaffected, and
+nothing in the existing surface changed shape. The one thing that turned out cleaner than the design
+record proposed: the full profile is a new `PlayerProfile` in `account/` rather than a widened
+`MinecraftProfile`, so the auth chain's result type is untouched and there is no breaking change to it.
+
+Held back for the 1.0.0 freeze, deliberately: credential (username + password) login, which the design
+record flags for an explicit decision; the removal of the deprecated
+`AccountNetworkUtil.fetchProfileFromToken`; and a bulk entitlement sweep. 1.0.0 is where the surface is
+frozen and those are settled.
+
 ## [0.10.0] - 2026-08-06
 
 Identity that stays current — the third milestone of the
