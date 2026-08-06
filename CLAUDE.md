@@ -26,6 +26,7 @@ AltsRuntime<H> alts = new AltsRuntime.Builder<H>()
 alts.loginService();          // the entire login surface
 alts.accountService();        // check / refresh, without touching the live session
 alts.bulk();                   // the same, over many accounts, paced
+alts.accountServices(account); // profile / entitlements / name / skin / cape, over the token
 alts.skinCache();             // AsyncCache<username, H>
 alts.gameStats("example.net") // AsyncCache<uuid, GameStats>, one per registered source
 ```
@@ -37,7 +38,9 @@ Package map:
 | Package | What lives there |
 |---|---|
 | `spi/` | the host seams — the entire boundary. The library calls these; the host implements them |
-| `net/` | `HttpUtil` — the one way out of the library — plus `NetworkScope`, `ProxyRoute`, `Backoff` |
+| `net/` | `HttpUtil` — the one way out of the library — plus `NetworkScope`, `ProxyRoute`, `Backoff`, `Multipart` |
+| `account/` | the post-login surface over a token: profile, entitlements, name (+claim), skin, cape |
+| `time/` | `TimeSource` seam + `SystemTimeSource` / `NtpTimeSource`, for the scheduled name claim |
 | `bulk/` | one operation over many accounts: pacing, retries, progress, cancellation |
 | `auth/` | the login routes, account check/refresh, `MicrosoftAuthConfig`, token expiry, cookies |
 | `store/` | `AltStore` (accounts) and `SecretStore` (per-user secrets), both encrypted files |
@@ -102,6 +105,19 @@ do. Pass a `NetworkScope` naming the purpose and, when there is one, the account
 request; it must never fall back to a direct connection. That fallback would disclose the host's real
 address at the moment it believed every request was routed, and unlike a failed request it cannot be
 undone.
+
+**The account services live over a token and never touch the session or store.** `account/` is a set of
+one-job services (`profile`, `entitlements`, `name`, `skin`, `cape`) built from a live access token via
+`AccountServices.of(...)` or `alts.accountServices(account)`. A read throws `AccountException` (which
+carries the HTTP status); a mutation like a name change returns a classified result rather than throwing,
+because a taken name is an outcome, not an error. Reach the services through the facade — the `*Impl`
+classes are package-private on purpose.
+
+**A scheduled claim's wait is real-time.** `NameService.claimAt` sleeps to the final stretch then spins
+briefly; its clock is a `time/TimeSource` seam so a host can correct drift, but the sleep is wall-clock.
+Test it with the real clock and short durations, not a frozen one — a frozen clock diverges from the
+sleep. And keep "the name was claimed" separate from "the run stopped": a terminal failure stops without
+claiming.
 
 **Avatars key on UUID and default to Mojang.** `skinCache().get(uuid)`, never the username — a rename
 breaks a name-keyed head for good. The default `AvatarSource` crops the face from Mojang directly rather

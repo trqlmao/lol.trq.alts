@@ -271,6 +271,72 @@ at — a session token sent to the refresh route returns an invalid grant, which
 rather than as a line that went to the wrong place. Compiled as
 `GettingStartedExample.refreshEverything` and `GettingStartedExample.importPastedCredentials`.
 
+## Managing an account
+
+Once you hold a live account, `alts.accountServices(account)` is everything you can do to it through the
+Minecraft services — read its full profile, check what it owns, change its name, set its skin or cape.
+None of it installs a session or touches the store; each call operates on the account the token belongs
+to.
+
+```java
+AccountServices services = alts.accountServices(account);
+
+// What it looks like: name, skins, capes, and any pending moderation action.
+PlayerProfile profile = services.profile().fetch();
+render(profile.name() + (profile.hasPendingActions() ? " (flagged)" : ""));
+
+// What it owns — the product set, not a boolean, so a lapsing Game Pass is told from ownership.
+Entitlements owned = services.entitlements().fetch();
+if (owned.viaGamePass() && !owned.ownsJavaOutright()) {
+    showError(profile.name() + " plays Java through Game Pass, which can lapse");
+}
+
+// Change its name, if a name you want is free.
+if (services.name().checkAvailability("DesiredName") == NameAvailability.AVAILABLE) {
+    NameChangeResult change = services.name().change("DesiredName");
+    if (!change.success()) {
+        showError("Name change: " + change.message());
+    }
+}
+```
+
+The services and what each covers:
+
+| Service | What it does |
+|---|---|
+| `profile()` | the full read — name, UUID, skins, capes, pending `profileActions` |
+| `entitlements()` | the product set (`ownsJava`, `ownsJavaOutright`, `viaGamePass`, `ownsBedrock`) |
+| `name()` | availability, eligibility, change, and a scheduled `claimAt` |
+| `skin()` | `setFromUrl`, `upload`, `reset`, with the classic/slim model |
+| `cape()` | `owned`, `setActive`, `hide` |
+
+A read throws `AccountException` on a refused token (it carries the status, so `tokenRefused()` and
+`rateLimited()` answer without a message match). A name change does not throw on rejection — it returns a
+classified `NameChangeResult`, because a taken name and a cooldown are outcomes to show, not errors to
+catch. Compiled as `GettingStartedExample.manageAccount`.
+
+### Claiming a name at a drop
+
+When a name frees up at a known time, `claimAt` fires a bounded burst of change attempts around that
+instant and stops on the first success:
+
+```java
+alts.accountServices(account).name().claimAt(name, dropsAt, ClaimOptions.defaults()).thenAccept(result -> {
+    if (result.claimed()) {
+        render("claimed " + name + " in " + result.attempts() + " attempts");
+    } else {
+        showError("did not get " + name + ": " + result.finalResult().message());
+    }
+});
+```
+
+The drop time is an input — you read it off wherever names are listed and pass it in; the library does
+not monitor for one. `ClaimOptions` sets the lead time (how early to begin), the window (how long to
+keep trying), the spacing, and the concurrency. For a millisecond-critical drop, correct the clock by
+passing a `TimeSource` — `NtpTimeSource` for one NTP round trip, or your own if you already hold
+corrected time. The wait sleeps down to the final stretch and then briefly spins, because a scheduler
+sleep overshoots a millisecond target. Compiled as `GettingStartedExample.claimAtDrop`.
+
 ## Logging in from a cookie file
 
 Cookie exports arrive as files far more often than as pasted text: every browser extension that produces

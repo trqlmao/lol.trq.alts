@@ -2,6 +2,13 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import lol.trq.alts.AltsRuntime;
+import lol.trq.alts.account.AccountException;
+import lol.trq.alts.account.AccountServices;
+import lol.trq.alts.account.ClaimOptions;
+import lol.trq.alts.account.Entitlements;
+import lol.trq.alts.account.NameAvailability;
+import lol.trq.alts.account.NameChangeResult;
+import lol.trq.alts.account.PlayerProfile;
 import lol.trq.alts.auth.AltLoginCallback;
 import lol.trq.alts.auth.MicrosoftAuthConfig;
 import lol.trq.alts.bulk.BulkEntryResult;
@@ -334,6 +341,62 @@ public final class GettingStartedExample {
                 render(chip.label() + " " + chip.value());
             }
         }
+    }
+
+    /**
+     * Section "Managing an account": everything you can do to an account after logging in — read its
+     * full profile, check what it owns, and change its name. All of it runs over the account's token and
+     * touches neither the store nor the live session.
+     *
+     * @param alts the runtime built by {@link #buildRuntime}
+     * @param account the account to operate on
+     * @throws AccountException if a call was refused or the service failed
+     */
+    public static void manageAccount(AltsRuntime<MyHandle> alts, AltAccount account) throws AccountException {
+        AccountServices services = alts.accountServices(account);
+
+        // What it looks like: name, skins, capes, and any pending moderation action.
+        PlayerProfile profile = services.profile().fetch();
+        render(profile.name() + (profile.hasPendingActions() ? " (flagged)" : ""));
+
+        // What it owns — the product set, not a boolean, so a lapsing Game Pass is told from ownership.
+        Entitlements owned = services.entitlements().fetch();
+        if (owned.viaGamePass() && !owned.ownsJavaOutright()) {
+            showError(profile.name() + " plays Java through Game Pass, which can lapse");
+        }
+
+        // Change its name, if a name you want is free.
+        if (services.name().checkAvailability("DesiredName") == NameAvailability.AVAILABLE) {
+            NameChangeResult change = services.name().change("DesiredName");
+            if (!change.success()) {
+                showError("Name change: " + change.message());
+            }
+        }
+    }
+
+    /**
+     * Section "Claiming a name at a drop": fire a bounded burst of change attempts around the instant a
+     * name frees up, stopping on the first success. The drop time is one you read off wherever names are
+     * listed; the library claims at the time you give it, it does not monitor for one.
+     *
+     * @param alts the runtime built by {@link #buildRuntime}
+     * @param account the account to claim onto
+     * @param name the name to claim
+     * @param dropsAt when the name becomes available
+     */
+    public static void claimAtDrop(
+            AltsRuntime<MyHandle> alts, AltAccount account, String name, java.time.Instant dropsAt) {
+        alts.accountServices(account)
+                .name()
+                .claimAt(name, dropsAt, ClaimOptions.defaults())
+                .thenAccept(result -> {
+                    if (result.claimed()) {
+                        render("claimed " + name + " in " + result.attempts() + " attempts");
+                    } else {
+                        showError("did not get " + name + ": "
+                                + result.finalResult().message());
+                    }
+                });
     }
 
     /** Stands in for the host translating a {@link SessionData} into its platform's live session. */

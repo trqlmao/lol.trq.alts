@@ -1,8 +1,17 @@
 # Full account management — the 1.0.0 surface
 
-Status: proposed
+Status: the management surface shipped in 0.11.0; 1.0.0 finalizes it
 Date: 2026-08-06
-Release: 1.0.0 (breaking; freezes the surface)
+Release: 0.11.0 (the surface, additive) then 1.0.0 (freeze)
+
+**What shipped in 0.11.0, and how it differs from this record.** The whole `account/` surface — profile,
+entitlements, name (availability, eligibility, change, scheduled claim), skin, cape — plus `time/` and
+`XstsError`, all additive. Two deviations, both improvements: the full profile is a new `PlayerProfile`
+in `account/` rather than a widened `MinecraftProfile`, so the auth chain's result type is untouched and
+there is no break; and the credential-login decision, the deprecated-API removal, and the bulk
+entitlement sweep are all deferred to 1.0.0, where the freeze is made deliberately. The device-code route
+(§F below) is likewise a 1.0.0 item. So 1.0.0 is: decide credential login, add device code, add the bulk
+sweep, remove the deprecated profile methods, and freeze.
 
 The library authenticates well, stores accounts safely, and operates on them in bulk. What it cannot do
 is anything to an account *after* login beyond validating it: read the full profile, check what the
