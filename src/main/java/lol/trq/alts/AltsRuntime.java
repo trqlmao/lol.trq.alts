@@ -7,6 +7,8 @@ import lol.trq.alts.auth.AltAccountService;
 import lol.trq.alts.auth.AltLoginService;
 import lol.trq.alts.auth.AltLoginServiceImpl;
 import lol.trq.alts.auth.MicrosoftAuthConfig;
+import lol.trq.alts.bulk.BulkOperations;
+import lol.trq.alts.bulk.BulkOperationsImpl;
 import lol.trq.alts.cache.AsyncCache;
 import lol.trq.alts.model.GameStats;
 import lol.trq.alts.net.HttpUtil;
@@ -41,6 +43,7 @@ public final class AltsRuntime<H> {
     private static final long STATS_TTL_MILLIS = 5 * 60 * 1000L;
 
     private final AltLoginServiceImpl loginService;
+    private final BulkOperations bulk;
     private final SkinAvatarCache<H> skinCache;
     private final Map<String, AsyncCache<String, GameStats>> gameStatsCaches;
     private final AsyncCache<String, GameStats> emptyStatsCache;
@@ -70,6 +73,11 @@ public final class AltsRuntime<H> {
         this.toasts = builder.toastSink;
         this.vaultResolver = builder.vaultTransportResolver;
         this.loginService = new AltLoginServiceImpl(builder.sessionInjector, builder.microsoftAuth);
+
+        // The import runs resolve and store through a login service whose injector does nothing, which
+        // is what keeps importing fifty credentials from switching session fifty times.
+        this.bulk = new BulkOperationsImpl(
+                new AltLoginServiceImpl(session -> {}, builder.microsoftAuth), loginService.accountService());
         this.skinCache = new SkinAvatarCache<>(builder.textureUploader, builder.mainThread);
 
         // Game stats are optional and per-server: one cache per registered source. A request for a
@@ -113,6 +121,17 @@ public final class AltsRuntime<H> {
      */
     public AltAccountService accountService() {
         return loginService.accountService();
+    }
+
+    /**
+     * Returns the bulk surface, for running one operation over many accounts at a pace the service will
+     * tolerate. Nothing it does installs a session.
+     *
+     * @return the bulk operations
+     * @since 0.9.0
+     */
+    public BulkOperations bulk() {
+        return bulk;
     }
 
     /**

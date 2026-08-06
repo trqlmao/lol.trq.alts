@@ -24,10 +24,22 @@ public final class AccountNetworkUtil {
      *     answered
      * @param username the resolved username, or {@code null} when the lookup did not resolve one
      * @param uuid the resolved UUID, or {@code null} when the lookup did not resolve one
+     * @param retryAfter how long the service asked the caller to wait, or {@code null} when it did not;
+     *     added in 0.9.0
      * @author trq
      * @since 0.8.0
      */
-    public record ProfileLookup(int status, String username, String uuid) {
+    public record ProfileLookup(int status, String username, String uuid, java.time.Duration retryAfter) {
+
+        /**
+         * Returns whether the service is asking the caller to slow down.
+         *
+         * @return true if the status is 429
+         * @since 0.9.0
+         */
+        public boolean rateLimited() {
+            return status == 429;
+        }
 
         /**
          * Returns whether the lookup resolved an identity.
@@ -138,8 +150,9 @@ public final class AccountNetworkUtil {
             return new ProfileLookup(
                     response.status(),
                     body.get("name").getAsString(),
-                    body.get("id").getAsString());
+                    body.get("id").getAsString(),
+                    response.retryAfter());
         }
-        return new ProfileLookup(response.status(), null, null);
+        return new ProfileLookup(response.status(), null, null, response.retryAfter());
     }
 }

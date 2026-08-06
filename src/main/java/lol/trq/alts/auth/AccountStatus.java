@@ -1,5 +1,6 @@
 package lol.trq.alts.auth;
 
+import java.time.Duration;
 import lol.trq.alts.auth.AltLoginCallback.FailureReason;
 import lol.trq.alts.model.AltAccount;
 
@@ -13,10 +14,13 @@ import lol.trq.alts.model.AltAccount;
  * @param state the machine-readable outcome
  * @param reason the classified cause, {@link FailureReason#NONE} when the account is usable
  * @param message a short human-readable description
+ * @param retryAfter how long the service asked the caller to wait before trying again, or {@code null}
+ *     when it asked for nothing; added in 0.9.0
  * @author trq
  * @since 0.8.0
  */
-public record AccountStatus(AltAccount account, State state, FailureReason reason, String message) {
+public record AccountStatus(
+        AltAccount account, State state, FailureReason reason, String message, Duration retryAfter) {
 
     /**
      * What an account can be.
@@ -76,7 +80,7 @@ public record AccountStatus(AltAccount account, State state, FailureReason reaso
      * @since 0.8.0
      */
     public static AccountStatus valid(AltAccount account) {
-        return new AccountStatus(account, State.VALID, FailureReason.NONE, "Session is live");
+        return new AccountStatus(account, State.VALID, FailureReason.NONE, "Session is live", null);
     }
 
     /**
@@ -87,7 +91,17 @@ public record AccountStatus(AltAccount account, State state, FailureReason reaso
      * @since 0.8.0
      */
     public static AccountStatus renewed(AltAccount account) {
-        return new AccountStatus(account, State.RENEWED, FailureReason.NONE, "Session renewed");
+        return new AccountStatus(account, State.RENEWED, FailureReason.NONE, "Session renewed", null);
+    }
+
+    /**
+     * Returns whether the service asked the caller to wait before trying this account again.
+     *
+     * @return true if a delay was stated
+     * @since 0.9.0
+     */
+    public boolean rateLimited() {
+        return retryAfter != null;
     }
 
     /**
@@ -101,6 +115,22 @@ public record AccountStatus(AltAccount account, State state, FailureReason reaso
      * @since 0.8.0
      */
     public static AccountStatus failure(AltAccount account, State state, FailureReason reason, String message) {
-        return new AccountStatus(account, state, reason, message);
+        return new AccountStatus(account, state, reason, message, null);
+    }
+
+    /**
+     * Creates a status for an account the service asked the caller to come back to later.
+     *
+     * @param account the account this describes
+     * @param state the outcome
+     * @param reason the classified cause
+     * @param message a short description
+     * @param retryAfter how long the service asked the caller to wait, or {@code null}
+     * @return a failed status carrying the requested delay
+     * @since 0.9.0
+     */
+    public static AccountStatus failure(
+            AltAccount account, State state, FailureReason reason, String message, Duration retryAfter) {
+        return new AccountStatus(account, state, reason, message, retryAfter);
     }
 }

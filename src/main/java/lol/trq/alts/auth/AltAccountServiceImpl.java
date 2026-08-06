@@ -117,7 +117,8 @@ public class AltAccountServiceImpl implements AltAccountService {
             return AccountStatus.valid(account);
         }
         FailureReason reason = reasonFor(lookup);
-        return AccountStatus.failure(account, stateFor(reason, renewable(account)), reason, messageFor(lookup));
+        return AccountStatus.failure(
+                account, stateFor(reason, renewable(account)), reason, messageFor(lookup), lookup.retryAfter());
     }
 
     /**
@@ -225,6 +226,9 @@ public class AltAccountServiceImpl implements AltAccountService {
         }
         if (lookup.missingProfile()) {
             return "This account has no Minecraft profile";
+        }
+        if (lookup.rateLimited()) {
+            return "Rate limited by the profile service";
         }
         return "Profile lookup failed with status " + lookup.status();
     }
