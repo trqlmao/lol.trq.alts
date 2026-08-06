@@ -1,11 +1,30 @@
 version: 2
 updates:
+  # Action bumps are a CI change, not a build one, which is what the history calls them. Without a
+  # prefix here Dependabot titles every PR "build(deps)", and the subject is what lands on main.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    commit-message:
+      prefix: "ci(deps)"
+    # One PR for the lot. These move together, each is a pinned-SHA line, and reviewing them
+    # separately buys nothing over reviewing them at once.
+    groups:
+      actions:
+        patterns:
+          - "*"
 
   - package-ecosystem: gradle
     directory: /
     schedule:
       interval: weekly
+    commit-message:
+      prefix: "build(deps)"
+    # Minor and patch travel together; a major arrives on its own, because that is the one that
+    # deserves to be read rather than waved through.
+    groups:
+      gradle-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
