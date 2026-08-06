@@ -4,6 +4,11 @@ import java.util.Map;
 import lol.trq.alts.AltsRuntime;
 import lol.trq.alts.auth.AltLoginCallback;
 import lol.trq.alts.auth.MicrosoftAuthConfig;
+import lol.trq.alts.bulk.BulkEntryResult;
+import lol.trq.alts.bulk.BulkHandle;
+import lol.trq.alts.bulk.BulkOptions;
+import lol.trq.alts.bulk.BulkProgress;
+import lol.trq.alts.bulk.BulkReport;
 import lol.trq.alts.crypto.CryptoException;
 import lol.trq.alts.crypto.VaultIdentity;
 import lol.trq.alts.crypto.X25519HkdfAesGcmKeyWrap;
@@ -155,6 +160,60 @@ public final class GettingStartedExample {
                 }
             });
         }
+    }
+
+    /**
+     * Section "Doing it to every account at once": a paced sweep with progress and a cancel handle. The
+     * report separates a run that was stopped from one that merely had failures, because those need
+     * different things said to the user.
+     *
+     * @param alts the runtime built by {@link #buildRuntime}
+     * @return the handle, so the caller can cancel it
+     */
+    public static BulkHandle refreshEverything(AltsRuntime<MyHandle> alts) {
+        BulkHandle handle = alts.bulk().refreshAll(AltStore.accounts(), BulkOptions.defaults(), new BulkProgress() {
+            @Override
+            public void started(int index, int total, String label) {
+                render("checking " + label + " (" + (index + 1) + "/" + total + ")");
+            }
+
+            @Override
+            public void completed(int index, int total, BulkEntryResult result) {
+                if (!result.success()) {
+                    showError(result.label() + ": " + result.message());
+                }
+            }
+
+            @Override
+            public void finished(BulkReport report) {
+                if (report.stoppedEarly()) {
+                    showRetry("Stopped early — the service asked us to slow down.");
+                }
+                render(report.succeeded() + " of " + report.results().size() + " refreshed");
+            }
+        });
+        // handle.cancel() stops it starting anything further; whatever is in flight still finishes.
+        return handle;
+    }
+
+    /**
+     * Section "Doing it to every account at once": importing a pasted list. Each line is classified and
+     * sent to the route that fits it; nothing is logged into.
+     *
+     * @param alts the runtime built by {@link #buildRuntime}
+     * @param pastedLines one credential per line, as the user pasted them
+     */
+    public static void importPastedCredentials(AltsRuntime<MyHandle> alts, List<String> pastedLines) {
+        alts.bulk()
+                .importCredentials(pastedLines, LoginMode.ADD, BulkOptions.defaults(), BulkProgress.NONE)
+                .report()
+                .thenAccept(report -> {
+                    render(report.succeeded() + " imported");
+                    for (BulkEntryResult failure : report.failures()) {
+                        // The label is a username or "entry 4" — never the line, which is a credential.
+                        showError(failure.label() + ": " + failure.message());
+                    }
+                });
     }
 
     /**

@@ -25,6 +25,7 @@ AltsRuntime<H> alts = new AltsRuntime.Builder<H>()
 
 alts.loginService();          // the entire login surface
 alts.accountService();        // check / refresh, without touching the live session
+alts.bulk();                   // the same, over many accounts, paced
 alts.skinCache();             // AsyncCache<username, H>
 alts.gameStats("example.net") // AsyncCache<uuid, GameStats>, one per registered source
 ```
@@ -36,7 +37,8 @@ Package map:
 | Package | What lives there |
 |---|---|
 | `spi/` | the host seams — the entire boundary. The library calls these; the host implements them |
-| `net/` | `HttpUtil` — the one way out of the library — plus `NetworkScope` and `ProxyRoute` |
+| `net/` | `HttpUtil` — the one way out of the library — plus `NetworkScope`, `ProxyRoute`, `Backoff` |
+| `bulk/` | one operation over many accounts: pacing, retries, progress, cancellation |
 | `auth/` | the login routes, account check/refresh, `MicrosoftAuthConfig`, token expiry, cookies |
 | `store/` | `AltStore` (accounts) and `SecretStore` (per-user secrets), both encrypted files |
 | `cache/` | `AsyncCache<K,V>` — lazy, non-blocking, stale-while-revalidate |

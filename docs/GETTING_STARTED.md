@@ -191,6 +191,85 @@ was trying to fix. `refresh` is for when the answer needs to be "and make it wor
 `status.account()` is the record as it now stands, renewed credentials included, so read your updated
 copy from there rather than reassembling it. Compiled as `GettingStartedExample.sweepStoredAccounts`.
 
+## Doing it to every account at once
+
+A loop over fifty accounts is not the same problem as one account fifty times. It needs pacing, because
+the service rate-limits by address; retries that know which failures are worth retrying; a way to stop;
+and a report that says *which* alt failed rather than a percentage. `alts.bulk()` is all four.
+
+```java
+BulkHandle handle = alts.bulk().refreshAll(AltStore.accounts(), BulkOptions.defaults(), new BulkProgress() {
+    @Override
+    public void started(int index, int total, String label) {
+        render("checking " + label + " (" + (index + 1) + "/" + total + ")");
+    }
+
+    @Override
+    public void completed(int index, int total, BulkEntryResult result) {
+        if (!result.success()) {
+            showError(result.label() + ": " + result.message());
+        }
+    }
+
+    @Override
+    public void finished(BulkReport report) {
+        if (report.stoppedEarly()) {
+            showRetry("Stopped early — the service asked us to slow down.");
+        }
+        render(report.succeeded() + " of " + report.results().size() + " refreshed");
+    }
+});
+```
+
+Three operations, all of which leave the session alone:
+
+| Method | What it does |
+|---|---|
+| `checkAll` | asks whether each stored token still works; renews nothing |
+| `refreshAll` | that, and renews the spent ones, persisting each rotation |
+| `importCredentials` | resolves a pasted list into accounts, storing them with `LoginMode.ADD` |
+
+`BulkOptions.defaults()` is four at a time, a quarter second apart, two retries growing from two seconds,
+stopping if the service says to slow down. They are deliberately unambitious: the failure being avoided
+is an address earning a longer ban, and the cost of being slower than necessary is another minute.
+
+Worth knowing:
+
+- **`stopOnRateLimit` defaults to on.** Continuing to send to a service that has asked you to stop is how
+  an address earns a longer ban than the one it is already serving. `report.stoppedEarly()` tells you it
+  happened, which is different from `cancelled()` and different again from a run where everything ran and
+  some entries failed. Use `withoutStoppingOnRateLimit()` to wait each one out instead.
+- **Only transient failures are retried.** A refused or permanently spent credential is never retried —
+  renewal rotates the refresh token, so retrying one spends rotations to no purpose.
+- **Cancel stops it starting more.** Entries already in flight finish and appear in the report; abandoning
+  them would leave half-finished authentications behind.
+- **Labels are never credentials.** `BulkEntryResult.label` is a resolved username or `entry 4`, never
+  the input line, because results are exactly what a host logs.
+- Spacing is global rather than per proxy route. Asking your `ProxyProvider` which route an entry *would*
+  take means a rotating provider hands out a slot the library then does not use, so it does not ask. Shard
+  your own runs if you need per-route pacing.
+
+Importing works the same way, and each line is classified before it is sent anywhere:
+
+```java
+alts.bulk()
+        .importCredentials(pastedLines, LoginMode.ADD, BulkOptions.defaults(), BulkProgress.NONE)
+        .report()
+        .thenAccept(report -> {
+            render(report.succeeded() + " imported");
+            for (BulkEntryResult failure : report.failures()) {
+                // The label is a username or "entry 4" — never the line, which is a credential.
+                showError(failure.label() + ": " + failure.message());
+            }
+        });
+```
+
+`CredentialKind.detect(line)` is public, so you can show a user what you are about to import before
+running it. A line it cannot place comes back `UNKNOWN` and fails that entry rather than being guessed
+at — a session token sent to the refresh route returns an invalid grant, which reads as a dead credential
+rather than as a line that went to the wrong place. Compiled as
+`GettingStartedExample.refreshEverything` and `GettingStartedExample.importPastedCredentials`.
+
 ## Logging in from a cookie file
 
 Cookie exports arrive as files far more often than as pasted text: every browser extension that produces
