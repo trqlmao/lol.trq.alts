@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-05
+
+The first milestone of the [alt-management surface](docs/specs/2026-08-05-alt-management-surface.md):
+requests can be routed, accounts can be operated on without being logged into, and an account that owns
+no Minecraft says so.
+
+### Added
+
+- **A proxy seam.** `spi/ProxyProvider` names the route each request takes, asked per request with a
+  `NetworkScope` carrying the purpose (`AUTH`, `PROFILE`, `AVATAR`, `STATS`, `VAULT`) and, when there is
+  one, the account it is for. Wire it with `AltsRuntime.Builder.proxyProvider(...)`. Microsoft and Mojang
+  rate-limit by source address, so an alt manager validating fifty accounts from one machine looks like
+  one machine hammering the service — per-account routing is what that costs, and until now nothing could
+  change where a request went. Rotation policy, pool health, and where proxies come from stay host-side;
+  the library only asks.
+
+  **Resolution fails closed.** A provider that throws or returns `null` fails the request rather than
+  falling back to a direct connection. The intuitive fallback is the wrong one here: a silent fallback
+  discloses the machine's real address at exactly the moment the host believed every request was covered,
+  and unlike a failed request that cannot be taken back. Returning `ProxyRoute.direct()` is how a host
+  says direct is fine; a direct route also opens without naming a proxy at all, so a JVM-level proxy
+  setting keeps working.
+
+  Authenticated SOCKS5 is refused rather than silently downgraded —
+  `ProxyRoute.socks5(...).withCredentials(...)` throws. The JDK reads SOCKS credentials from
+  process-global state, and a library that installs a default `Authenticator` has reached into its host's
+  JVM to do it; connecting unauthenticated instead would send the request from an address the host did
+  not choose, which is the same disclosure by another route. HTTP proxy credentials ride on the
+  connection as `Proxy-Authorization` and need no global state, so two accounts can use two different
+  authenticated proxies at once.
+- **`AltAccountService`** (`alts.accountService()`) — `check(account)` asks the service whether a stored
+  token still works and changes nothing; `refresh(account)` renews from the refresh token when the stored
+  one is spent and persists the rotation. Neither installs a session. `loginAccount` is now `refresh`
+  plus the injection, which is the decomposition the whole thing exists for: a sweep over every stored
+  alt cannot be a loop over `loginAccount`, because that switches session once per account and whichever
+  finishes last wins.
+
+  `check` is a separate method rather than a flag because rotation is not free. The token endpoint issues
+  a *new* refresh token on every redemption, so a validation pass built on renewal spends one rotation
+  per account per pass, on accounts nobody was trying to fix.
+- **`AccountStatus`**, carrying a `State` — `VALID`, `RENEWED`, `EXPIRED`, `REAUTH_REQUIRED`,
+  `NOT_ENTITLED`, `UNREACHABLE`, `UNKNOWN` — and the account as it now stands, renewed credentials
+  included. `EXPIRED` is the one the design record did not anticipate: a read-only `check` on a refused
+  token cannot report `REAUTH_REQUIRED`, because if the account still holds a refresh token the user's
+  next step is to renew it rather than to sit through a browser login. Those are different actions.
+- `AccountNetworkUtil.fetchProfile(token, profileUrl, scope)` and its `ProfileLookup`, which report the
+  status instead of collapsing every outcome to `null`.
+- `HttpUtil.getForStatus`, `HttpUtil.getHeader` (a header-only GET, for following a redirect chain by
+  hand), and `HttpUtil.getBytes` (a size-capped binary GET). `HttpUtil.HttpResponse` gains `retryAfter`
+  and `rateLimited()`, so a host can honour a 429 today.
+
+### Fixed
+
+- **An account that owns no Minecraft no longer reports a bad token.** Authenticating succeeds and the
+  profile endpoint answers 404, which the library reported as "Invalid token" — sending the user through
+  a browser login that resolves nothing. It is now `NOT_ENTITLED`, from every route rather than only the
+  new surface. The one ambiguity is stated rather than papered over: a 404 also covers an account that
+  owns the game and has never chosen a username, so the message says "no Minecraft profile".
+- **The cookie redirect chain and the avatar fetch each opened their own connection**, so neither had the
+  finite timeouts nor the refusal to follow redirects that every other request has had since 0.6.0 — and
+  neither could be routed through a proxy at all. Both now go through `HttpUtil`. The avatar fetch keeps
+  following redirects, because image hosts redirect and it carries no credential to replay; a caller that
+  passes an `Authorization` header gets the strict behaviour back automatically.
+- The avatar fetch reads at most a megabyte. An unbounded read from an endpoint reached over someone
+  else's proxy is where a cap belongs.
+
+### Changed
+
+- **Breaking:** `HttpUtil.HttpResponse` gains a trailing `retryAfter` component, so positional
+  construction of the record must supply it. `successful()` and the factory paths are unchanged.
+- **Breaking:** `AltLoginCallback.FailureReason` gains `NOT_ENTITLED`, so an exhaustive `switch` over it
+  needs a new case.
+- **Deprecated:** `AccountNetworkUtil.fetchProfileFromToken`, both overloads, in favour of
+  `fetchProfile`. They cannot express the difference between a refused token and an account with no
+  profile, which are different problems with different answers. Removal is planned for 1.0.0.
+
+### Notes
+
+Rate-limit backoff was specced as part of this milestone and deferred to 0.9.0, where the bulk
+operations that drive it land. Shipping a public utility with no caller is worse than shipping it with
+one; what landed now is the input it needs, `HttpResponse.retryAfter`.
+
 ## [0.7.0] - 2026-08-05
 
 A login route, a second Microsoft dialect, and a durability pass over the local stores after a full audit
