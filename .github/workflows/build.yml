@@ -95,12 +95,22 @@ jobs:
             echo "::warning::no CHANGELOG section for $VERSION; falling back to generated notes"
           fi
 
+      # Create-or-update, so a re-run of a tag, or a release cut by hand before the runner picked the job
+      # up, does not fail the job. `gh release create` errors on an existing tag; `edit` + `upload
+      # --clobber` reach the same end state either way.
       - name: Publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          if [ -s release-notes.md ]; then
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            # `edit` has no --generate-notes, so only rewrite the notes when the changelog gave us some;
+            # otherwise leave whatever the release already carries.
+            if [ -s release-notes.md ]; then
+              gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file release-notes.md
+            fi
+            gh release upload "$GITHUB_REF_NAME" build/libs/*.jar --clobber
+          elif [ -s release-notes.md ]; then
             gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" \
               --notes-file release-notes.md build/libs/*.jar
           else
