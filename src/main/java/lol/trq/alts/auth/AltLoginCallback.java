@@ -46,7 +46,16 @@ public interface AltLoginCallback {
         NETWORK,
 
         /** The flow requires host configuration that was not supplied. */
-        NOT_CONFIGURED
+        NOT_CONFIGURED,
+
+        /**
+         * The credentials authenticated, but the account has no Minecraft profile — it does not own the
+         * game, or it owns it and has never chosen a username. Retrying and re-authenticating are both
+         * pointless; the account has to be entitled, or a name chosen, elsewhere.
+         *
+         * @since 0.8.0
+         */
+        NOT_ENTITLED
     }
 
     /**

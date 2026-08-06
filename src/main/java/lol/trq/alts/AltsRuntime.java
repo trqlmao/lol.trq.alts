@@ -3,6 +3,7 @@ package lol.trq.alts;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import lol.trq.alts.auth.AltAccountService;
 import lol.trq.alts.auth.AltLoginService;
 import lol.trq.alts.auth.AltLoginServiceImpl;
 import lol.trq.alts.auth.MicrosoftAuthConfig;
@@ -39,7 +40,7 @@ public final class AltsRuntime<H> {
     /** How long a fetched game-stats snapshot stays fresh before a background refresh. */
     private static final long STATS_TTL_MILLIS = 5 * 60 * 1000L;
 
-    private final AltLoginService loginService;
+    private final AltLoginServiceImpl loginService;
     private final SkinAvatarCache<H> skinCache;
     private final Map<String, AsyncCache<String, GameStats>> gameStatsCaches;
     private final AsyncCache<String, GameStats> emptyStatsCache;
@@ -100,6 +101,18 @@ public final class AltsRuntime<H> {
      */
     public AltLoginService loginService() {
         return loginService;
+    }
+
+    /**
+     * Returns the account service, for validating or renewing a stored account without installing it as
+     * the live session. A host sweeping every alt it holds wants this rather than
+     * {@link AltLoginService#loginAccount}, which would switch session once per account.
+     *
+     * @return the account service
+     * @since 0.8.0
+     */
+    public AltAccountService accountService() {
+        return loginService.accountService();
     }
 
     /**

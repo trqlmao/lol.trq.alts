@@ -18,6 +18,7 @@ import lol.trq.alts.model.AccountType;
 import lol.trq.alts.model.AltAccount;
 import lol.trq.alts.model.LoginMode;
 import lol.trq.alts.model.SessionData;
+import lol.trq.alts.net.NetworkScope;
 import lol.trq.alts.spi.SessionInjector;
 import lol.trq.alts.store.AltStore;
 
@@ -35,6 +36,7 @@ public class AltLoginServiceImpl implements AltLoginService {
     private final SessionInjector sessionInjector;
     private final MicrosoftAuthConfig microsoftAuth;
     private final Clock clock;
+    private final AltAccountService accounts;
 
     /**
      * Creates a login service that installs resolved sessions through the given injector.
@@ -52,6 +54,18 @@ public class AltLoginServiceImpl implements AltLoginService {
         this.sessionInjector = Objects.requireNonNull(sessionInjector, "sessionInjector");
         this.microsoftAuth = microsoftAuth;
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.accounts = new AltAccountServiceImpl(microsoftAuth, this.clock);
+    }
+
+    /**
+     * Returns the account service this login service is built on, for a caller that wants to validate or
+     * renew without installing a session.
+     *
+     * @return the account service
+     * @since 0.8.0
+     */
+    public AltAccountService accountService() {
+        return accounts;
     }
 
     /**
@@ -77,21 +91,22 @@ public class AltLoginServiceImpl implements AltLoginService {
                 if (fastResult.isPresent()) return fastResult.get();
             }
 
-            // Fallback: perform an API request to validate the token and get profile data. A refusal and
-            // an unreachable service are different answers — one means the token is spent, the other says
-            // nothing about it — so they are classified apart, as the stored-account route does.
-            String[] profile;
+            // Fallback: perform an API request to validate the token and get profile data. A refusal, an
+            // account with no Minecraft profile, and an unreachable service are three different answers
+            // with three different remedies, so they are classified apart rather than collapsed.
+            AccountNetworkUtil.ProfileLookup profile;
             try {
-                profile = AccountNetworkUtil.fetchProfileFromToken(cleanToken, profileUrl());
+                profile = AccountNetworkUtil.fetchProfile(
+                        cleanToken, profileUrl(), NetworkScope.of(NetworkScope.Purpose.PROFILE));
             } catch (Exception unreachable) {
                 return AltLoginCallback.LoginResult.failure(
                         "Login failed: " + unreachable.getMessage(), FailureReason.NETWORK);
             }
-            if (profile == null) {
-                return AltLoginCallback.LoginResult.failure(
-                        "Invalid token or session expired", FailureReason.INVALID_TOKEN);
+            if (profile.found()) {
+                return finalizeLogin(profile.username(), profile.uuid(), cleanToken, AccountType.SESSION, mode);
             }
-            return finalizeLogin(profile[0], profile[1], cleanToken, AccountType.SESSION, mode);
+            return AltLoginCallback.LoginResult.failure(
+                    AltAccountServiceImpl.messageFor(profile), AltAccountServiceImpl.reasonFor(profile));
         });
     }
 
@@ -223,12 +238,16 @@ public class AltLoginServiceImpl implements AltLoginService {
         }
         return MicrosoftAuthUtil.authenticateWithRefreshToken(microsoftAuth, cleaned)
                 .thenApply(profile -> finalizeLogin(profile, AccountType.MICROSOFT, mode))
-                .exceptionally(ex -> refreshFailure(ex, null));
+                .exceptionally(AltLoginServiceImpl::importFailure);
     }
 
     /**
      * Authenticates into a pre-existing {@link AltAccount}, renewing the session first when its access
      * token is spent and once more if the stored token turns out to be refused.
+     *
+     * <p>This is {@link AltAccountService#refresh(AltAccount)} plus one step. Making the account usable
+     * and installing it as the live session are separate concerns, and separating them is what lets a
+     * host validate or renew a hundred accounts without the session moving.
      *
      * @param account the account model to log into
      * @return a future containing the result of the login attempt
@@ -238,78 +257,10 @@ public class AltLoginServiceImpl implements AltLoginService {
         if (account.type() == AccountType.OFFLINE) {
             return loginOffline(account.username(), LoginMode.DIRECT);
         }
-        if (!account.hasRefreshToken() || microsoftAuth == null) {
-            return useStoredWithoutRenewal(account);
-        }
-        if (TokenExpiry.isExpired(account, clock)) {
-            return renew(account);
-        }
-        return useStored(account).thenCompose(result -> {
-            // Only a refused token is worth a renewal. An unreachable service or a host injector that
-            // threw says nothing about the credential, and Microsoft rotates the refresh token on every
-            // redemption, so renewing on those would spend a rotation to fix something else's fault.
-            if (result.success() || result.reason() != FailureReason.INVALID_TOKEN) {
-                return CompletableFuture.completedFuture(result);
-            }
-            return renew(account);
-        });
-    }
-
-    /**
-     * Logs into a stored account that cannot be renewed — it carries no refresh token, or Microsoft
-     * login is not configured. A token still inside its lifetime is installed straight away, matching
-     * the session route's fast path; anything else is validated first. Either way the stored record is
-     * installed as it stands, so its type, refresh token, bans, and provenance survive a login that
-     * happens to be unrenewable.
-     *
-     * @param account the stored account to log into
-     * @return a future holding the outcome
-     */
-    private CompletableFuture<AltLoginCallback.LoginResult> useStoredWithoutRenewal(AltAccount account) {
-        return TokenExpiry.isExpired(account, clock)
-                ? useStored(account)
-                : CompletableFuture.supplyAsync(() -> inject(account));
-    }
-
-    /**
-     * Validates an account's stored access token and installs the stored record as-is, preserving its
-     * type, refresh token, bans, and provenance.
-     *
-     * @param account the stored account to use
-     * @return a future holding the outcome; only an {@link FailureReason#INVALID_TOKEN} failure means the
-     *     token was refused and renewal should run
-     */
-    private CompletableFuture<AltLoginCallback.LoginResult> useStored(AltAccount account) {
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                if (AccountNetworkUtil.fetchProfileFromToken(account.accessToken(), profileUrl()) == null) {
-                    return AltLoginCallback.LoginResult.failure("Stored token refused", FailureReason.INVALID_TOKEN);
-                }
-            } catch (Exception unreachable) {
-                return AltLoginCallback.LoginResult.failure(
-                        "Validation failed: " + unreachable.getMessage(), FailureReason.NETWORK);
-            }
-            return inject(account);
-        });
-    }
-
-    /**
-     * Renews an account from its stored refresh token, persisting the rotated credentials before
-     * installing the session. The renewed account is derived from the stored one, so bans, provenance,
-     * and shared attribution survive the renewal.
-     *
-     * @param account the stored account to renew
-     * @return a future holding the outcome
-     */
-    private CompletableFuture<AltLoginCallback.LoginResult> renew(AltAccount account) {
-        return MicrosoftAuthUtil.authenticateWithRefreshToken(microsoftAuth, account.refreshToken())
-                .thenApply(profile -> {
-                    AltAccount renewed =
-                            account.withTokens(profile.accessToken(), profile.refreshToken(), profile.expiresAt());
-                    AltStore.updateCredentials(renewed);
-                    return inject(renewed);
-                })
-                .exceptionally(ex -> refreshFailure(ex, account));
+        return accounts.refresh(account)
+                .thenApply(status -> status.usable()
+                        ? inject(status.account())
+                        : AltLoginCallback.LoginResult.failure(status.message(), status.reason()));
     }
 
     /**
@@ -342,21 +293,18 @@ public class AltLoginServiceImpl implements AltLoginService {
     }
 
     /**
-     * Maps a failed renewal onto a classified result, discarding the stored refresh token only when the
-     * rejection is permanent. A transient failure must never cost the user a working credential.
+     * Maps a failed refresh-token <em>import</em> onto a classified result. Nothing is discarded here:
+     * the token came from the caller rather than from the store, so there is no stored credential this
+     * failure could cost. Renewing a stored account is {@link AltAccountServiceImpl}'s job, and it does
+     * clear a permanently spent one.
      *
-     * @param ex the failure the renewal completed with
-     * @param account the stored account being renewed, or {@code null} for the import route
+     * @param ex the failure the redemption completed with
      * @return the classified failure result
      */
-    private AltLoginCallback.LoginResult refreshFailure(Throwable ex, AltAccount account) {
+    private static AltLoginCallback.LoginResult importFailure(Throwable ex) {
         Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
         boolean permanent =
                 cause instanceof MicrosoftAuthUtil.RefreshRejectedException rejection && rejection.permanent();
-
-        if (permanent && account != null) {
-            AltStore.clearRefreshToken(account.uuid());
-        }
 
         return AltLoginCallback.LoginResult.failure(
                 "Refresh: " + (cause.getMessage() != null ? cause.getMessage() : "unknown error"),
