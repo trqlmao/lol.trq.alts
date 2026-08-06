@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-06
+
+Identity that stays current — the third milestone of the
+[alt-management surface](docs/specs/2026-08-05-alt-management-surface.md).
+
+### Added
+
+- **`AvatarSource` seam and the `MojangAvatarSource` default.** The avatar cache used to fetch from a
+  hardcoded third-party head-render URL, which disclosed every account's username to that service on
+  every cache miss — for an alt manager, the whole list one person controls, arriving from one address.
+  The default now resolves the skin from Mojang's own session server and crops the face locally, so the
+  identity is disclosed to no party the host was not already authenticating through.
+- **`UrlTemplateAvatarSource`**, the opt-in for a host that wants a head-render service back (its 3D
+  renders, its CDN). Installing it is a deliberate trade — that service sees each UUID — rather than the
+  default a host gets by doing nothing.
+- `AltAccount.withUsername(String)`, and username correction on `check`/`refresh`: the profile lookup
+  that validates a token already carries the current name, so a renamed account has its stored username
+  updated for free rather than showing the name it was saved under.
+
+### Changed
+
+- **Breaking:** `SkinAvatarCache.get` is keyed by **UUID**, not username. A username is a mutable display
+  attribute, so a username-keyed cache breaks a renamed account's head permanently — the old name stops
+  resolving. Pass `account.uuid()` where you passed `account.username()`.
+- **Breaking:** the default avatar source changed from the third-party service to Mojang. A host that
+  wants the old behaviour installs `UrlTemplateAvatarSource` with its URL template. No API change beyond
+  the key, but the faces now come from elsewhere.
+- **Breaking:** `SkinAvatarCache`'s constructor takes an `AvatarSource` first. Hosts using `AltsRuntime`
+  are unaffected; only direct construction of the cache changes.
+
+### Fixed
+
+- A failed avatar fetch is retried after a growing backoff instead of being cached as failed for the life
+  of the process. One network blip used to cost the head until restart.
+- The avatar fetch no longer downloads without a size cap, and it routes through the proxy seam like
+  every other request (both carried over from the 0.8.0 transport unification, now exercised by the new
+  source).
+
 ## [0.9.0] - 2026-08-05
 
 Bulk operations — the second milestone of the
