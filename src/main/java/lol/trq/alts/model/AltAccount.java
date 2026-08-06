@@ -149,6 +149,30 @@ public record AltAccount(
     }
 
     /**
+     * Returns a copy of this account with its username replaced. A username is mutable — a player can
+     * rename — so a validation that resolves the current one updates the stored record through this
+     * rather than leaving a stale display name behind.
+     *
+     * @param username the current username
+     * @return a copy carrying the given username
+     * @since 0.10.0
+     */
+    public AltAccount withUsername(String username) {
+        return new AltAccount(
+                uuid,
+                username,
+                accessToken,
+                type,
+                lastUsed,
+                lastUsedBy,
+                bans,
+                sourceClient,
+                sourceUser,
+                refreshToken,
+                expiresAt);
+    }
+
+    /**
      * Returns a copy of this account stamped with its provenance — the client it was added from and the
      * user within that client — for cross-client shared repositories.
      *

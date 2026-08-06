@@ -13,6 +13,7 @@ import lol.trq.alts.cache.AsyncCache;
 import lol.trq.alts.model.GameStats;
 import lol.trq.alts.net.HttpUtil;
 import lol.trq.alts.skin.SkinAvatarCache;
+import lol.trq.alts.spi.AvatarSource;
 import lol.trq.alts.spi.GameStatsSource;
 import lol.trq.alts.spi.MainThreadExecutor;
 import lol.trq.alts.spi.ProxyProvider;
@@ -78,7 +79,7 @@ public final class AltsRuntime<H> {
         // is what keeps importing fifty credentials from switching session fifty times.
         this.bulk = new BulkOperationsImpl(
                 new AltLoginServiceImpl(session -> {}, builder.microsoftAuth), loginService.accountService());
-        this.skinCache = new SkinAvatarCache<>(builder.textureUploader, builder.mainThread);
+        this.skinCache = new SkinAvatarCache<>(builder.avatarSource, builder.textureUploader, builder.mainThread);
 
         // Game stats are optional and per-server: one cache per registered source. A request for a
         // server with no source returns the shared empty cache, whose loader always yields null, so
@@ -135,7 +136,8 @@ public final class AltsRuntime<H> {
     }
 
     /**
-     * Returns the avatar cache, generic over this host's texture-handle type.
+     * Returns the avatar cache, generic over this host's texture-handle type. Keyed by UUID, so a
+     * renamed account keeps its head.
      *
      * @return the skin avatar cache
      */
@@ -197,6 +199,7 @@ public final class AltsRuntime<H> {
         private MicrosoftAuthConfig microsoftAuth;
         private VaultTransportResolver vaultTransportResolver;
         private ProxyProvider proxyProvider;
+        private AvatarSource avatarSource;
         private String storeFileName;
         private String storeKeyBinding;
         private String secretsFileName;
@@ -302,6 +305,22 @@ public final class AltsRuntime<H> {
          */
         public Builder<H> vaultTransportResolver(VaultTransportResolver value) {
             this.vaultTransportResolver = value;
+            return this;
+        }
+
+        /**
+         * Sets the avatar source (optional; defaults to {@link lol.trq.alts.skin.MojangAvatarSource},
+         * which resolves the face from Mojang's session server and crops it locally). Install
+         * {@link lol.trq.alts.skin.UrlTemplateAvatarSource} to fetch from a head-render service instead —
+         * a deliberate trade, since that discloses each account's UUID to a third party the host was not
+         * otherwise talking to.
+         *
+         * @param value the host avatar source
+         * @return this builder
+         * @since 0.10.0
+         */
+        public Builder<H> avatarSource(AvatarSource value) {
+            this.avatarSource = value;
             return this;
         }
 

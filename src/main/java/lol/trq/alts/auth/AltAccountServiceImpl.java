@@ -114,11 +114,30 @@ public class AltAccountServiceImpl implements AltAccountService {
                     "Validation failed: " + unreachable.getMessage());
         }
         if (lookup.found()) {
-            return AccountStatus.valid(account);
+            return AccountStatus.valid(correctUsername(account, lookup.username()));
         }
         FailureReason reason = reasonFor(lookup);
         return AccountStatus.failure(
                 account, stateFor(reason, renewable(account)), reason, messageFor(lookup), lookup.retryAfter());
+    }
+
+    /**
+     * Updates and persists the stored username when the profile lookup returned a different one, so a
+     * renamed account stops showing the name it carried when it was saved. Free, since the lookup that
+     * validated the token already carried the current name. A no-op when the name is unchanged or the
+     * store does not hold the account.
+     *
+     * @param account the account being validated
+     * @param currentUsername the username the profile endpoint returned
+     * @return the account carrying the current username
+     */
+    private static AltAccount correctUsername(AltAccount account, String currentUsername) {
+        if (currentUsername == null || currentUsername.equals(account.username())) {
+            return account;
+        }
+        AltAccount renamed = account.withUsername(currentUsername);
+        AltStore.updateCredentials(renamed);
+        return renamed;
     }
 
     /**
