@@ -6,7 +6,11 @@ name: no-leak
 # secret, read at runtime and masked in logs.
 
 on:
+  # Only main and release tags. Scanning every branch push duplicated the pull-request
+  # scan and, on a branch whose run cannot read the secret, failed outright.
   push:
+    branches: [ main ]
+    tags: [ 'v*' ]
   pull_request:
   workflow_dispatch:
 
@@ -24,8 +28,13 @@ jobs:
         run: |
           set -e
           if [ -z "$DENYLIST" ]; then
-            if [ "${{ github.event_name }}" = "pull_request" ]; then
-              echo "::warning::NEUTRALITY_DENYLIST unavailable (likely a fork PR); skipping scan."
+            # Repository secrets reach neither a Dependabot run (those read a separate secret store)
+            # nor a fork's pull request. Skipping there is safe rather than lenient: both can only
+            # propose a change, and the push to main that lands it runs this scan with the secret in
+            # hand, over the merged tree. Failing instead would block every dependency bump on a
+            # secret the run is not permitted to see.
+            if [ "${{ github.actor }}" = "dependabot[bot]" ] || [ "${{ github.event_name }}" = "pull_request" ]; then
+              echo "::warning::NEUTRALITY_DENYLIST unavailable to this run; the scan on main covers it."
               exit 0
             fi
             echo "::error::NEUTRALITY_DENYLIST secret is not set; the neutrality gate cannot run."
