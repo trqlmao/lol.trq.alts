@@ -258,6 +258,23 @@ public final class HttpUtil {
     }
 
     /**
+     * Sends a POST request with a JSON body, returning the status alongside the parsed body, so a caller
+     * can read an error body — an XSTS {@code XErr}, say — rather than collapse every failure to null.
+     *
+     * @param urlString the target URL
+     * @param headers optional HTTP headers to include in the request
+     * @param jsonBody the JSON payload as a string
+     * @return the status and parsed body
+     * @throws Exception if a network or protocol error occurs
+     * @since 1.0.0
+     */
+    public static HttpResponse postJsonForStatus(String urlString, Map<String, String> headers, String jsonBody)
+            throws Exception {
+        return executeForStatus(
+                urlString, "POST", "application/json", headers, jsonBody.getBytes(StandardCharsets.UTF_8), null);
+    }
+
+    /**
      * Sends a GET request to the specified URL.
      *
      * @param urlString the target URL
@@ -297,6 +314,32 @@ public final class HttpUtil {
     public static HttpResponse getForStatus(String urlString, Map<String, String> headers, NetworkScope scope)
             throws Exception {
         return executeForStatus(urlString, "GET", null, headers, null, scope);
+    }
+
+    /**
+     * Sends a request with any method, returning the status alongside the parsed body. For the account
+     * mutations — a {@code PUT} name change, a {@code DELETE} skin reset — that the JSON-only helpers do
+     * not cover, and that need the status and error body rather than a collapsed {@code null}.
+     *
+     * @param method the HTTP method
+     * @param urlString the target URL
+     * @param contentType the Content-Type header value, or null when there is no body
+     * @param headers optional HTTP headers to include in the request
+     * @param body the raw request body, or null
+     * @param scope what is being fetched, and on whose behalf
+     * @return the status and parsed body; the body is null when absent or not JSON
+     * @throws Exception if a network or protocol error occurs
+     * @since 1.0.0
+     */
+    public static HttpResponse sendForStatus(
+            String method,
+            String urlString,
+            String contentType,
+            Map<String, String> headers,
+            byte[] body,
+            NetworkScope scope)
+            throws Exception {
+        return executeForStatus(urlString, method, contentType, headers, body, scope);
     }
 
     /**

@@ -3,6 +3,8 @@ package lol.trq.alts;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import lol.trq.alts.account.AccountEndpoints;
+import lol.trq.alts.account.AccountServices;
 import lol.trq.alts.auth.AltAccountService;
 import lol.trq.alts.auth.AltLoginService;
 import lol.trq.alts.auth.AltLoginServiceImpl;
@@ -10,6 +12,7 @@ import lol.trq.alts.auth.MicrosoftAuthConfig;
 import lol.trq.alts.bulk.BulkOperations;
 import lol.trq.alts.bulk.BulkOperationsImpl;
 import lol.trq.alts.cache.AsyncCache;
+import lol.trq.alts.model.AltAccount;
 import lol.trq.alts.model.GameStats;
 import lol.trq.alts.net.HttpUtil;
 import lol.trq.alts.skin.SkinAvatarCache;
@@ -45,6 +48,7 @@ public final class AltsRuntime<H> {
 
     private final AltLoginServiceImpl loginService;
     private final BulkOperations bulk;
+    private final AccountEndpoints accountEndpoints;
     private final SkinAvatarCache<H> skinCache;
     private final Map<String, AsyncCache<String, GameStats>> gameStatsCaches;
     private final AsyncCache<String, GameStats> emptyStatsCache;
@@ -79,6 +83,11 @@ public final class AltsRuntime<H> {
         // is what keeps importing fifty credentials from switching session fifty times.
         this.bulk = new BulkOperationsImpl(
                 new AltLoginServiceImpl(session -> {}, builder.microsoftAuth), loginService.accountService());
+
+        // The account services talk to the same host the auth chain validates against, so a host that
+        // fronts Minecraft services with a proxy — overriding the profile URL — reaches them through the
+        // same origin rather than needing a second override.
+        this.accountEndpoints = accountEndpointsFrom(builder.microsoftAuth);
         this.skinCache = new SkinAvatarCache<>(builder.avatarSource, builder.textureUploader, builder.mainThread);
 
         // Game stats are optional and per-server: one cache per registered source. A request for a
@@ -104,6 +113,24 @@ public final class AltsRuntime<H> {
     }
 
     /**
+     * Derives the account-services base from the configured profile URL, so the two reach the same
+     * origin. The profile URL ends {@code /minecraft/profile}; stripping that leaves the base. When
+     * Microsoft login is unconfigured, the public default is used.
+     *
+     * @param config the Microsoft auth config, or null
+     * @return the account endpoints
+     */
+    private static AccountEndpoints accountEndpointsFrom(MicrosoftAuthConfig config) {
+        String profileUrl =
+                config != null ? config.minecraftProfileUrl() : MicrosoftAuthConfig.DEFAULT_MINECRAFT_PROFILE_URL;
+        String suffix = "/minecraft/profile";
+        String base = profileUrl.endsWith(suffix)
+                ? profileUrl.substring(0, profileUrl.length() - suffix.length())
+                : profileUrl;
+        return new AccountEndpoints(base);
+    }
+
+    /**
      * Returns the login service callers use to authenticate accounts.
      *
      * @return the login service
@@ -122,6 +149,32 @@ public final class AltsRuntime<H> {
      */
     public AltAccountService accountService() {
         return loginService.accountService();
+    }
+
+    /**
+     * Returns the full account-management surface for one account — profile, entitlements, name, skin,
+     * cape — built over its access token. For operating on an account you hold a live token for; nothing
+     * here installs a session.
+     *
+     * @param account the account to operate on
+     * @return the account services
+     * @since 1.0.0
+     */
+    public AccountServices accountServices(AltAccount account) {
+        return AccountServices.of(account.accessToken(), account.uuid(), accountEndpoints);
+    }
+
+    /**
+     * Returns the account-management surface for a bare access token, when the caller holds a token
+     * rather than a stored {@link AltAccount}.
+     *
+     * @param accessToken the Minecraft access token
+     * @param accountUuid the account UUID for request routing, or null
+     * @return the account services
+     * @since 1.0.0
+     */
+    public AccountServices accountServices(String accessToken, String accountUuid) {
+        return AccountServices.of(accessToken, accountUuid, accountEndpoints);
     }
 
     /**

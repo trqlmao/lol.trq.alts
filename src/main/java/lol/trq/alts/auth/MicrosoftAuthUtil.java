@@ -282,8 +282,14 @@ public final class MicrosoftAuthUtil {
                 body.addProperty("RelyingParty", "rp://api.minecraftservices.com/");
                 body.addProperty("TokenType", "JWT");
 
-                JsonObject response = HttpUtil.postJson(config.xstsAuthUrl(), null, body.toString(), AUTH);
-                if (response == null) throw new Exception("XSTS auth failed");
+                // Read the status so an XSTS refusal's XErr can be decoded: the endpoint answers a
+                // rejection with a code that says exactly what is wrong, which a bare "auth failed"
+                // throws away.
+                HttpUtil.HttpResponse status = HttpUtil.postJsonForStatus(config.xstsAuthUrl(), null, body.toString());
+                if (!status.successful() || status.body() == null) {
+                    throw xstsFailure(status);
+                }
+                JsonObject response = status.body();
 
                 String token = response.get("Token").getAsString();
                 String uhs = response.getAsJsonObject("DisplayClaims")
@@ -429,6 +435,64 @@ public final class MicrosoftAuthUtil {
 
     // The Microsoft token's own lifetime is deliberately absent: the expiry that matters downstream is
     // the Minecraft services token's, which lasts far longer and is what the account is stamped with.
+    /**
+     * Builds a classified failure from an XSTS rejection, reading the {@code XErr} code out of the error
+     * body so the reason survives to the caller.
+     *
+     * @param response the XSTS rejection
+     * @return the exception to fail the flow with
+     */
+    private static XstsAuthException xstsFailure(HttpUtil.HttpResponse response) {
+        long xerr = 0L;
+        JsonObject body = response.body();
+        if (body != null && body.has("XErr") && body.get("XErr").isJsonPrimitive()) {
+            try {
+                xerr = body.get("XErr").getAsLong();
+            } catch (NumberFormatException ignored) {
+                // Leave xerr at 0 -> UNKNOWN.
+            }
+        }
+        XstsError error = XstsError.fromCode(xerr);
+        return new XstsAuthException("XSTS auth failed (" + error + ", status " + response.status() + ")", error);
+    }
+
+    /**
+     * Signals an XSTS authorization refusal, carrying the classified {@link XstsError} so a host can tell
+     * the user what to fix rather than reporting a bare failure.
+     *
+     * @author trq
+     * @since 1.0.0
+     */
+    public static final class XstsAuthException extends RuntimeException {
+
+        @Serial
+        private static final long serialVersionUID = 1L;
+
+        private final XstsError error;
+
+        /**
+         * Creates an XSTS failure.
+         *
+         * @param message the failure description
+         * @param error the classified cause
+         * @since 1.0.0
+         */
+        public XstsAuthException(String message, XstsError error) {
+            super(message);
+            this.error = error;
+        }
+
+        /**
+         * Returns the classified cause of the refusal.
+         *
+         * @return the XSTS error
+         * @since 1.0.0
+         */
+        public XstsError error() {
+            return error;
+        }
+    }
+
     /** Holds the Microsoft OAuth access and refresh tokens. */
     private record MsTokens(String accessToken, String refreshToken) {}
 
