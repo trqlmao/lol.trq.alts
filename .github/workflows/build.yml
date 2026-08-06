@@ -53,3 +53,57 @@ jobs:
         with:
           name: lol.trq.alts-${{ github.ref_name }}
           path: build/libs/*.jar
+
+  # Tagging is the whole release ceremony, so a tag that builds green publishes itself. Releases used to
+  # be created by hand, which meant they simply were not: six versions shipped with tags and no release.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+
+    # Only this job may write to the repository, which is why it is separate from the build.
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      # Tests already ran in the build job this depends on; re-running them here would only delay a
+      # release that is already known to be green.
+      - name: Assemble jars
+        run: ./gradlew build -x test --no-daemon
+
+      # Matched by prefix rather than regex: a version is dotted, and the headings carry brackets, so a
+      # dynamic pattern needs escaping that does not survive the trip through the shell.
+      - name: Extract the changelog section
+        run: |
+          set -e
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v heading="## [$VERSION]" '
+            index($0, heading) == 1 { found = 1; next }
+            found && index($0, "## [") == 1 { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::warning::no CHANGELOG section for $VERSION; falling back to generated notes"
+          fi
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          if [ -s release-notes.md ]; then
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" \
+              --notes-file release-notes.md build/libs/*.jar
+          else
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" \
+              --generate-notes build/libs/*.jar
+          fi
