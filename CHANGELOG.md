@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-05
+
+Bulk operations — the second milestone of the
+[alt-management surface](docs/specs/2026-08-05-alt-management-surface.md).
+
+### Added
+
+- **`lol.trq.alts.bulk`**, reached as `alts.bulk()`. Three operations, none of which install a session:
+  `checkAll` (validate only), `refreshAll` (validate and renew, persisting each rotation), and
+  `importCredentials` (resolve a pasted list into accounts). A host's own loop over `loginAccount` gets
+  fifty session switches and, somewhere around account nine, a rate limit it has no way to recognise.
+- `BulkOptions` — concurrency, spacing between starts, retry budget, and whether a stated rate limit ends
+  the run. `defaults()` is four at a time, 250ms apart, two retries growing from two seconds, stopping on
+  a rate limit. Deliberately unambitious: the failure being avoided is a source address earning a longer
+  ban, and the cost of being slower than necessary is another minute.
+- `BulkProgress`, `BulkEntryResult`, `BulkReport`, and `BulkHandle`. Progress is per entry rather than a
+  percentage, because what a user needs is *which* alt failed. The report separates `cancelled` from
+  `stoppedEarly` from a run where everything ran and some entries failed — three outcomes that call for
+  three different things being said.
+- `CredentialKind.detect(String)`, public so a host can preview a paste before running it. Anything it
+  cannot place is `UNKNOWN` and fails that entry rather than being guessed at: a session token sent to
+  the refresh route comes back as an invalid grant, which reads as a dead credential rather than as a
+  line that went to the wrong place.
+- `net/Backoff` — a stated `Retry-After` is honoured as given; everything else grows and is jittered,
+  because fifty entries that failed together would otherwise retry in lockstep and reproduce the burst
+  that caused the failure.
+- `AccountStatus.retryAfter()` / `rateLimited()` and the same on `AccountNetworkUtil.ProfileLookup`, so
+  the layer running a batch can tell a rate limit from any other network failure.
+
+### Changed
+
+- **Breaking:** `AccountStatus` and `AccountNetworkUtil.ProfileLookup` each gain a trailing `retryAfter`
+  component, so positional construction of either record must supply it. Every factory is unchanged, and
+  a new `AccountStatus.failure(..., Duration)` overload carries the delay.
+
+### Notes
+
+Concurrency is bounded structurally — that many worker chains pulling from one cursor — rather than by an
+executor, so the library still creates no threads of its own and everything runs on the common pool.
+
+Spacing is global rather than per proxy route, which the design record called for. Per-route pacing means
+asking the host's `ProxyProvider` which route an entry would take before making the request, and a
+rotating provider treats every ask as an allocation — so the library would claim two pool slots per entry
+and hand one back unused. Asking a provider more times than requests are made is a bug a host cannot see.
+
+§C (identity refresh and UUID-keyed avatars) was specced for this release and held back: two of its
+decisions — flipping the default avatar source off the third-party service, and changing what
+`skinCache().get()` is keyed on — were put to the repository owner and are unanswered. A focused release
+beats one with a guess baked into it. It becomes 0.10.0, and device-code login 0.11.0.
+
 ## [0.8.0] - 2026-08-05
 
 The first milestone of the [alt-management surface](docs/specs/2026-08-05-alt-management-surface.md):
