@@ -20,9 +20,11 @@ AltsRuntime<H> alts = new AltsRuntime.Builder<H>()
         .gameStatsSource(...)              // optional: one per server
         .microsoftAuth(MicrosoftAuthConfig.of(yourAzureClientId))  // optional
         .vaultTransportResolver(...)       // optional: avp:// authority -> transport
+        .proxyProvider(scope -> ...)       // optional: route each request; absent means direct
         .build();   // validates, binds the static stores, and loads them from disk
 
 alts.loginService();          // the entire login surface
+alts.accountService();        // check / refresh, without touching the live session
 alts.skinCache();             // AsyncCache<username, H>
 alts.gameStats("example.net") // AsyncCache<uuid, GameStats>, one per registered source
 ```
@@ -34,7 +36,8 @@ Package map:
 | Package | What lives there |
 |---|---|
 | `spi/` | the host seams — the entire boundary. The library calls these; the host implements them |
-| `auth/` | the login routes, `MicrosoftAuthConfig`, token expiry, cookie parsing/reading |
+| `net/` | `HttpUtil` — the one way out of the library — plus `NetworkScope` and `ProxyRoute` |
+| `auth/` | the login routes, account check/refresh, `MicrosoftAuthConfig`, token expiry, cookies |
 | `store/` | `AltStore` (accounts) and `SecretStore` (per-user secrets), both encrypted files |
 | `cache/` | `AsyncCache<K,V>` — lazy, non-blocking, stale-while-revalidate |
 | `skin/` | `SkinAvatarCache<H>` over that cache |
@@ -81,6 +84,22 @@ withheld from a shared repository unless the manifest opts in. Keep all four pro
 **DTOs are records with `@SerializedName` on every component**, so (de)serialization survives shrinking
 and obfuscation. Any record carrying a credential overrides `toString` to redact it. Adding a component
 is a breaking change for positional construction — note it in the changelog.
+
+**Logging in is one step more than operating on an account.** `AltAccountService.check`/`refresh` never
+touch the live session; `loginAccount` is `refresh` plus the injection. Keep it that way — anything that
+works over many accounts (a validation sweep, a background refresh, a bulk import) is unbuildable the
+moment a session install creeps back into the middle of the chain. And prefer `check` over `refresh`
+when only looking: renewal rotates the refresh token every single time.
+
+**Every request goes through `HttpUtil`.** That is where the finite timeouts, the refusal to follow
+redirects, the drained error bodies, and the host's proxy live. A new call site that opens its own
+connection silently opts out of all four — which is what the cookie chain and the avatar fetch used to
+do. Pass a `NetworkScope` naming the purpose and, when there is one, the account.
+
+**Proxy resolution fails closed.** An installed `ProxyProvider` that throws or returns null fails the
+request; it must never fall back to a direct connection. That fallback would disclose the host's real
+address at the moment it believed every request was routed, and unlike a failed request it cannot be
+undone.
 
 **An unreadable store is not an empty store.** The encryption key is derived from machine properties, so
 a renamed OS user or a moved home directory turns a good file unreadable. `AltStore`/`SecretStore` never

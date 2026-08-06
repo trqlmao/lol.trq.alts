@@ -12,7 +12,8 @@
             ┌───────────────┴─────────────────────────────┐
             │  AltsRuntime  — wiring root + Builder         │
             ├──────────────────────────────────────────────┤
-  library   │ auth/   login flows (MS / refresh / cookie / cookie file / session / offline)
+  library   │ net/    HttpUtil — the one way out; proxy routing
+            │ auth/   login flows (MS / refresh / cookie / cookie file / session / offline)
             │ store/  AltStore (encrypted file) + EncryptionUtil
             │ cache/  AsyncCache<K,V>
             │ skin/   SkinAvatarCache<H>
@@ -28,7 +29,11 @@
 
 - **`spi/` seams** — the entire host boundary. The library calls these interfaces; it never imports a host class. This is what makes the same core usable from different mods and different renderers.
 
+- **`net/`** — the one way out of the library. Every request goes through `HttpUtil`, which is what makes the transport rules enforceable in one place: finite timeouts, no automatic redirect following (the JDK replays request properties to the redirect target, which would hand an `Authorization: Bearer` header to whatever host a `3xx` names), drained error bodies, and the host's proxy. A `ProxyProvider` is asked per request with a `NetworkScope` naming the purpose and the account, so per-account routing is possible — an alt manager validating fifty accounts from one address is what a rate limiter exists to stop. Resolution **fails closed**: once a provider is installed, one that throws or names no route fails the request rather than falling back to a direct connection, because a silent fallback discloses the real address precisely when the host believed it was covered.
+
 - **`auth/`** — `AltLoginService` exposes seven `CompletableFuture`-based methods: six login routes (Microsoft, refresh token, cookie text, cookie file, session, offline) plus `loginAccount`, which logs into a record you already hold. The implementation runs the OAuth / cookie / token flows off-thread and hands the resolved identity to the host's `SessionInjector` as a transport-neutral `SessionData`. `loginAccount` renews an expired session in place from the account's stored refresh token — proactively when `TokenExpiry` says the access token is spent, and once reactively when the services refuse it — persisting the rotated credential before installing the session. Outcomes carry a typed `AltLoginCallback.FailureReason`, so a host can tell `REAUTH_REQUIRED` (the credential is permanently spent) from `NETWORK` (retryable) without matching on a message string. Every route classifies those two apart: a service that refused an answer and a service that never gave one mean opposite things to the user in front of it.
+
+  `AltAccountService` is the same machinery with the injection removed: `check` asks whether a stored token still works and changes nothing, `refresh` renews it and persists the rotation, and neither installs a session. `loginAccount` is `refresh` plus the injection. The split exists because a sweep over every stored alt cannot be a loop over `loginAccount` — that switches session once per account — and because rotation is not free: the token endpoint issues a new refresh token on every redemption, so a validation pass built on renewal spends one rotation per account per pass.
 
   `MicrosoftAuthConfig` carries the dialect as well as the endpoints. An Azure OAuth application and a *legacy MSA* one differ in three load-bearing ways — the redirect the grant must declare, the scope it asks for, and whether Xbox Live wants the ticket prefixed `d=` or `t=` — so `legacyMsa(clientId)` exists alongside `of(clientId)` rather than being a flag on the flow.
 

@@ -1,5 +1,6 @@
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import lol.trq.alts.AltsRuntime;
 import lol.trq.alts.auth.AltLoginCallback;
 import lol.trq.alts.auth.MicrosoftAuthConfig;
@@ -10,6 +11,9 @@ import lol.trq.alts.model.AltAccount;
 import lol.trq.alts.model.GameStats;
 import lol.trq.alts.model.LoginMode;
 import lol.trq.alts.model.SessionData;
+import lol.trq.alts.net.NetworkScope;
+import lol.trq.alts.net.ProxyRoute;
+import lol.trq.alts.spi.ProxyProvider;
 import lol.trq.alts.spi.ToastSink;
 import lol.trq.alts.store.AltStore;
 import lol.trq.alts.vault.SharedVault;
@@ -105,6 +109,52 @@ public final class GettingStartedExample {
                                 "Accounts not loaded",
                                 "The saved file could not be read: " + reason,
                                 8000));
+    }
+
+    /**
+     * Section "Routing requests": one proxy per account, so a sweep over fifty alts does not arrive at
+     * the service as one machine. The provider is asked per request; anything it cannot answer fails the
+     * request rather than falling back to the real address.
+     *
+     * @param poolByUuid the host's own mapping of account to proxy
+     * @return the provider to install on the builder
+     */
+    public static ProxyProvider proxyPerAccount(Map<String, ProxyRoute> poolByUuid) {
+        return scope -> {
+            // Avatars are not worth a proxy slot, and they carry no credential.
+            if (scope.purpose() == NetworkScope.Purpose.AVATAR) {
+                return ProxyRoute.direct();
+            }
+            ProxyRoute route = scope.accountUuid() == null ? null : poolByUuid.get(scope.accountUuid());
+            // Returning null would fail the request. Say so explicitly when direct is what you meant.
+            return route != null ? route : ProxyRoute.direct();
+        };
+    }
+
+    /**
+     * Section "Checking accounts without logging in": a sweep over everything the store holds. The live
+     * session never moves, which is the whole reason this is not a loop over {@code loginAccount}.
+     *
+     * @param alts the runtime built by {@link #buildRuntime}
+     */
+    public static void sweepStoredAccounts(AltsRuntime<MyHandle> alts) {
+        for (AltAccount account : AltStore.accounts()) {
+            alts.accountService().refresh(account).thenAccept(status -> {
+                switch (status.state()) {
+                    // Nothing to do; the account is good, and RENEWED already persisted its new token.
+                    case VALID, RENEWED -> render(status.account().username());
+                    // The stored token is spent but recoverable — only a read-only check reports this.
+                    case EXPIRED -> render(status.account().username() + " needs refreshing");
+                    // The credential is gone for good. Only a fresh interactive login fixes it.
+                    case REAUTH_REQUIRED -> promptMicrosoftLogin(status.account());
+                    // Authenticated fine, but there is no Minecraft profile behind it.
+                    case NOT_ENTITLED -> showError(status.account().username() + " does not own Minecraft");
+                    // Try again later. Nothing was spent.
+                    case UNREACHABLE -> showRetry(status.message());
+                    default -> showError(status.message());
+                }
+            });
+        }
     }
 
     /**

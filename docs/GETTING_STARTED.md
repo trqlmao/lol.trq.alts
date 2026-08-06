@@ -33,6 +33,7 @@ The library never touches your mod's types. You implement a small set of backend
 | `MainThreadExecutor` | Run a task on the render/main thread (e.g. `MinecraftClient#execute`). |
 | `ToastSink` | Surface a login notification in your UI. |
 | `GameStatsSource` | *(optional)* Fetch one server's stats as display chips; you hold any API key. Register one per server. |
+| `ProxyProvider` | *(optional)* Name the route each request takes. Without one, everything connects directly. |
 
 ## 3. Build the runtime
 
@@ -105,6 +106,90 @@ for (AltAccount account : saved) {
 ```
 
 Compiled as `GettingStartedExample.logInAndRead`.
+
+## Routing requests through a proxy
+
+Microsoft and Mojang rate-limit by source address. Validating fifty accounts from one machine looks like
+one machine hammering the service, which is exactly what the limiter is for — so an alt manager usually
+wants one proxy per account. Install a `ProxyProvider` and the library asks it before every request:
+
+```java
+public static ProxyProvider proxyPerAccount(Map<String, ProxyRoute> poolByUuid) {
+    return scope -> {
+        // Avatars are not worth a proxy slot, and they carry no credential.
+        if (scope.purpose() == NetworkScope.Purpose.AVATAR) {
+            return ProxyRoute.direct();
+        }
+        ProxyRoute route = scope.accountUuid() == null ? null : poolByUuid.get(scope.accountUuid());
+        // Returning null would fail the request. Say so explicitly when direct is what you meant.
+        return route != null ? route : ProxyRoute.direct();
+    };
+}
+```
+
+Wire it with `.proxyProvider(proxyPerAccount(myPool))`. The `NetworkScope` names what is being fetched
+(`AUTH`, `PROFILE`, `AVATAR`, `STATS`, `VAULT`) and, when there is one, the account it is for — which is
+what makes per-account pinning possible. Rotation policy, pool health, and where proxies come from are
+all yours; the library only asks.
+
+**Resolution fails closed.** Once a provider is installed, one that throws or returns `null` fails the
+request instead of connecting directly. This is deliberate and it is the opposite of what most libraries
+do: the reason to proxy an alt manager is that its accounts must not all look like one machine, so a
+silent fallback would disclose your real address at exactly the moment you believed every request was
+covered. A failed request can be retried; a disclosed address cannot be taken back. Say "direct is fine
+here" by returning `ProxyRoute.direct()`.
+
+Compiled as `GettingStartedExample.proxyPerAccount`.
+
+Two limits worth knowing:
+
+- **Authenticated SOCKS5 is not supported.** `ProxyRoute.socks5(...).withCredentials(...)` throws rather
+  than silently connecting unauthenticated. The JDK reads SOCKS credentials from process-global state,
+  and a library has no business installing a default `Authenticator` into your JVM. Unauthenticated
+  SOCKS5 works; front an authenticated one with a local HTTP proxy.
+- **HTTP proxy credentials ride on the connection** as `Proxy-Authorization`, which needs no global state
+  and works per request — including when two accounts use two different authenticated proxies.
+
+## Checking accounts without logging in
+
+Logging into an account installs it as the live session. That is right for one account and wrong for
+fifty: a "check all my alts" sweep built on `loginAccount` switches session once per account, and
+whichever finishes last wins.
+
+`alts.accountService()` is the same machinery without that last step:
+
+```java
+for (AltAccount account : AltStore.accounts()) {
+    alts.accountService().refresh(account).thenAccept(status -> {
+        switch (status.state()) {
+            // Nothing to do; the account is good, and RENEWED already persisted its new token.
+            case VALID, RENEWED -> render(status.account().username());
+            // The stored token is spent but recoverable — only a read-only check reports this.
+            case EXPIRED -> render(status.account().username() + " needs refreshing");
+            // The credential is gone for good. Only a fresh interactive login fixes it.
+            case REAUTH_REQUIRED -> promptMicrosoftLogin(status.account());
+            // Authenticated fine, but there is no Minecraft profile behind it.
+            case NOT_ENTITLED -> showError(status.account().username() + " does not own Minecraft");
+            // Try again later. Nothing was spent.
+            case UNREACHABLE -> showRetry(status.message());
+            default -> showError(status.message());
+        }
+    });
+}
+```
+
+Two methods, and the difference matters:
+
+- **`check(account)`** asks the service whether the stored token still works and changes nothing.
+- **`refresh(account)`** does that, and renews from the refresh token when the stored token is spent,
+  persisting the rotated credential.
+
+Reach for `check` when you are only looking. The token endpoint issues a *new* refresh token on every
+redemption, so a sweep built on `refresh` spends one rotation per account per sweep — on accounts nobody
+was trying to fix. `refresh` is for when the answer needs to be "and make it work".
+
+`status.account()` is the record as it now stands, renewed credentials included, so read your updated
+copy from there rather than reassembling it. Compiled as `GettingStartedExample.sweepStoredAccounts`.
 
 ## Logging in from a cookie file
 

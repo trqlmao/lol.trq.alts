@@ -1,8 +1,15 @@
 # Alt-management surface
 
-Status: proposed
+Status: §A, §B, §D shipped in 0.8.0; §C, §E, §F proposed
 Date: 2026-08-05
 Releases: 0.8.0 (breaking), 0.9.0 (breaking), 0.10.0
+
+**Two things changed on the way into 0.8.0, both recorded here rather than quietly.** `AccountStatus.State`
+gained `EXPIRED`: writing `check` showed that a read-only check on a refused token cannot report
+`REAUTH_REQUIRED`, because an account still holding a refresh token needs renewing rather than a fresh
+browser login, and those are different user actions. And the rate-limit backoff described under §A moved
+to 0.9.0, where the bulk operations that drive it land — a public utility with no caller is worse than
+one shipped alongside its consumer. `HttpResponse.retryAfter`, the input it needs, shipped now.
 
 The design record for closing the gap between "a library that logs an account in" and "a library a full
 alt manager can be built on". Five pieces, specced together because three of them share a dependency
