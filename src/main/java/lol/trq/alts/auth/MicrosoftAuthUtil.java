@@ -14,6 +14,7 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import lol.trq.alts.net.HttpUtil;
 import lol.trq.alts.net.MicrosoftCallbackServer;
+import lol.trq.alts.net.NetworkScope;
 
 /**
  * Orchestrates the multi-step OAuth 2.0 and Xbox Live authentication flow, exchanging an
@@ -26,6 +27,9 @@ import lol.trq.alts.net.MicrosoftCallbackServer;
 public final class MicrosoftAuthUtil {
 
     private static final String STATE_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_";
+
+    /** Every step of this flow is an identity-service exchange, so they share one scope. */
+    private static final NetworkScope AUTH = NetworkScope.of(NetworkScope.Purpose.AUTH);
 
     private MicrosoftAuthUtil() {}
 
@@ -155,7 +159,7 @@ public final class MicrosoftAuthUtil {
                         URLEncoder.encode(code, StandardCharsets.UTF_8),
                         URLEncoder.encode(redirectUri, StandardCharsets.UTF_8),
                         URLEncoder.encode(config.scope(), StandardCharsets.UTF_8));
-                JsonObject response = HttpUtil.postForm(config.tokenUrl(), null, body);
+                JsonObject response = HttpUtil.postForm(config.tokenUrl(), null, body, AUTH);
                 if (response == null) throw new Exception("Token exchange failed");
                 return new MsTokens(
                         response.get("access_token").getAsString(),
@@ -190,7 +194,7 @@ public final class MicrosoftAuthUtil {
                 if (config.redirectUri() != null) {
                     body += "&redirect_uri=" + URLEncoder.encode(config.redirectUri(), StandardCharsets.UTF_8);
                 }
-                response = HttpUtil.postFormForStatus(config.tokenUrl(), null, body);
+                response = HttpUtil.postFormForStatus(config.tokenUrl(), null, body, AUTH);
             } catch (Exception transportFailure) {
                 throw new RefreshRejectedException("refresh transport failure", false, transportFailure);
             }
@@ -249,7 +253,7 @@ public final class MicrosoftAuthUtil {
                 body.addProperty("RelyingParty", "http://auth.xboxlive.com");
                 body.addProperty("TokenType", "JWT");
 
-                JsonObject response = HttpUtil.postJson(config.xboxLiveAuthUrl(), null, body.toString());
+                JsonObject response = HttpUtil.postJson(config.xboxLiveAuthUrl(), null, body.toString(), AUTH);
                 if (response == null) throw new Exception("Xbox Live auth failed");
                 return response.get("Token").getAsString();
             } catch (Exception e) {
@@ -278,7 +282,7 @@ public final class MicrosoftAuthUtil {
                 body.addProperty("RelyingParty", "rp://api.minecraftservices.com/");
                 body.addProperty("TokenType", "JWT");
 
-                JsonObject response = HttpUtil.postJson(config.xstsAuthUrl(), null, body.toString());
+                JsonObject response = HttpUtil.postJson(config.xstsAuthUrl(), null, body.toString(), AUTH);
                 if (response == null) throw new Exception("XSTS auth failed");
 
                 String token = response.get("Token").getAsString();
@@ -308,7 +312,7 @@ public final class MicrosoftAuthUtil {
             try {
                 JsonObject body = new JsonObject();
                 body.addProperty("identityToken", "XBL3.0 x=" + xstsData.uhs() + ";" + xstsData.token());
-                JsonObject response = HttpUtil.postJson(config.minecraftLoginUrl(), null, body.toString());
+                JsonObject response = HttpUtil.postJson(config.minecraftLoginUrl(), null, body.toString(), AUTH);
                 if (response == null) throw new Exception("MC services auth failed");
                 long expiresIn =
                         response.has("expires_in") ? response.get("expires_in").getAsLong() : 0L;
@@ -332,7 +336,9 @@ public final class MicrosoftAuthUtil {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 JsonObject profile = HttpUtil.get(
-                        config.minecraftProfileUrl(), Map.of("Authorization", "Bearer " + session.accessToken()));
+                        config.minecraftProfileUrl(),
+                        Map.of("Authorization", "Bearer " + session.accessToken()),
+                        NetworkScope.of(NetworkScope.Purpose.PROFILE));
 
                 if (profile == null) throw new Exception("Profile fetch failed");
 

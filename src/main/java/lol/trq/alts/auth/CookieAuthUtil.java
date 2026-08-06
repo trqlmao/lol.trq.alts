@@ -3,14 +3,12 @@ package lol.trq.alts.auth;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import java.net.HttpURLConnection;
-import java.net.URI;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Map;
 import java.util.regex.Pattern;
 import lol.trq.alts.net.HttpUtil;
+import lol.trq.alts.net.NetworkScope;
 
 /**
  * Authenticates Minecraft accounts using browser session cookies.
@@ -251,35 +249,36 @@ public final class CookieAuthUtil {
     /**
      * Performs a GET request to a URL and returns the {@code Location} header for redirection.
      *
+     * <p>Goes through {@link HttpUtil} like every other request the library makes, which is what gives
+     * this chain the finite timeouts, the refusal to follow redirects on its own, and the host's proxy.
+     * Opening its own connection meant it had none of the three.
+     *
      * @param urlString the URL to request
      * @param cookies the cookies to send with the request
      * @return the target redirection URL
      * @throws Exception if the server does not return a redirect or an error occurs
      */
     private static String followRedirect(String urlString, String cookies) throws Exception {
-        URL url = new URI(urlString).toURL();
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        try {
-            conn.setRequestMethod("GET");
-            conn.setInstanceFollowRedirects(false);
-            conn.setRequestProperty(
-                    "Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8");
-            conn.setRequestProperty("Accept-Encoding", "*");
-            conn.setRequestProperty("Accept-Language", "en-US;q=0.8,en;q=0.7");
-            conn.setRequestProperty("User-Agent", USER_AGENT);
-            conn.setRequestProperty("Cookie", cookies);
+        Map<String, String> headers = Map.of(
+                "Accept",
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Encoding",
+                "*",
+                "Accept-Language",
+                "en-US;q=0.8,en;q=0.7",
+                "User-Agent",
+                USER_AGENT,
+                "Cookie",
+                cookies);
 
-            int status = conn.getResponseCode();
-            String location = conn.getHeaderField("Location");
+        HttpUtil.HeaderResponse response =
+                HttpUtil.getHeader(urlString, headers, "Location", NetworkScope.of(NetworkScope.Purpose.AUTH));
 
-            if (location == null) {
-                if (status >= 400) throw new Exception("HTTP " + status + " during redirect");
-                throw new Exception("No redirect location found");
-            }
-            return location;
-        } finally {
-            conn.disconnect();
+        if (response.value() == null) {
+            if (response.status() >= 400) throw new Exception("HTTP " + response.status() + " during redirect");
+            throw new Exception("No redirect location found");
         }
+        return response.value();
     }
 
     /**
@@ -317,7 +316,10 @@ public final class CookieAuthUtil {
         body.addProperty("ensureLegacyEnabled", true);
 
         JsonObject response = HttpUtil.postJson(
-                "https://api.minecraftservices.com/authentication/login_with_xbox", null, body.toString());
+                "https://api.minecraftservices.com/authentication/login_with_xbox",
+                null,
+                body.toString(),
+                NetworkScope.of(NetworkScope.Purpose.AUTH));
         if (response == null || !response.has("access_token"))
             throw new Exception("Minecraft Services rejected the token");
 
@@ -333,7 +335,9 @@ public final class CookieAuthUtil {
      */
     private static MinecraftProfile getMinecraftProfile(String mcToken) throws Exception {
         JsonObject profile = HttpUtil.get(
-                "https://api.minecraftservices.com/minecraft/profile", Map.of("Authorization", "Bearer " + mcToken));
+                "https://api.minecraftservices.com/minecraft/profile",
+                Map.of("Authorization", "Bearer " + mcToken),
+                NetworkScope.of(NetworkScope.Purpose.PROFILE));
         if (profile == null) throw new Exception("Failed to fetch Minecraft profile");
 
         String uuid = profile.get("id").getAsString();

@@ -1,13 +1,12 @@
 package lol.trq.alts.skin;
 
 import java.io.ByteArrayInputStream;
-import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import lol.trq.alts.net.HttpUtil;
+import lol.trq.alts.net.NetworkScope;
 import lol.trq.alts.spi.MainThreadExecutor;
 import lol.trq.alts.spi.TextureUploader;
 
@@ -36,6 +35,9 @@ public final class SkinAvatarCache<H> {
 
     private static final int FACE_PX = 64;
     private static final String AVATAR_URL = "https://mc-heads.net/avatar/%s/" + FACE_PX + ".png";
+
+    /** Largest avatar accepted. A 64px face is a couple of kilobytes; this is far past any real one. */
+    private static final long MAX_AVATAR_BYTES = 1L << 20;
 
     /** Sentinel marking an in-flight fetch. */
     private static final Object PENDING = new Object();
@@ -70,7 +72,7 @@ public final class SkinAvatarCache<H> {
         if (username == null || username.isBlank() || uploader == null) {
             return null;
         }
-        String key = username.toLowerCase();
+        String key = username.toLowerCase(java.util.Locale.ROOT);
         Object existing = cache.putIfAbsent(key, PENDING);
         if (existing == null) {
             fetchAsync(key);
@@ -87,21 +89,21 @@ public final class SkinAvatarCache<H> {
                 .thenAccept(bytes -> mainThread.execute(() -> upload(key, bytes)));
     }
 
+    /**
+     * Fetches one avatar through {@link HttpUtil}, so it takes the route the host's proxy provider names
+     * and inherits the finite timeouts every other request has. Opening its own connection meant this
+     * fetch had neither, and was the one request the host could not route.
+     *
+     * @param key the cache key being fetched
+     * @return the PNG bytes, or null on any failure
+     */
     private static byte[] downloadBytes(String key) {
         try {
-            URL url = new URL(String.format(AVATAR_URL, key));
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestProperty("User-Agent", "lol.trq.alts/1.0");
-            conn.setConnectTimeout(5_000);
-            conn.setReadTimeout(8_000);
-
-            if (conn.getResponseCode() != 200) {
-                return null;
-            }
-
-            try (InputStream in = conn.getInputStream()) {
-                return in.readAllBytes();
-            }
+            return HttpUtil.getBytes(
+                    String.format(AVATAR_URL, key),
+                    Map.of("User-Agent", "lol.trq.alts"),
+                    MAX_AVATAR_BYTES,
+                    NetworkScope.forAccount(NetworkScope.Purpose.AVATAR, null, key));
         } catch (Exception ignored) {
             return null;
         }

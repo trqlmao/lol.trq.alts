@@ -8,9 +8,11 @@ import lol.trq.alts.auth.AltLoginServiceImpl;
 import lol.trq.alts.auth.MicrosoftAuthConfig;
 import lol.trq.alts.cache.AsyncCache;
 import lol.trq.alts.model.GameStats;
+import lol.trq.alts.net.HttpUtil;
 import lol.trq.alts.skin.SkinAvatarCache;
 import lol.trq.alts.spi.GameStatsSource;
 import lol.trq.alts.spi.MainThreadExecutor;
+import lol.trq.alts.spi.ProxyProvider;
 import lol.trq.alts.spi.SessionInjector;
 import lol.trq.alts.spi.TextureUploader;
 import lol.trq.alts.spi.ToastSink;
@@ -49,6 +51,9 @@ public final class AltsRuntime<H> {
         Objects.requireNonNull(builder.vaultDirectory, "VaultDirectoryProvider required");
         Objects.requireNonNull(builder.mainThread, "MainThreadExecutor required");
         Objects.requireNonNull(builder.toastSink, "ToastSink required");
+
+        // Bound first: everything below it that can reach the network must already know how to.
+        HttpUtil.bind(builder.proxyProvider);
 
         AltStore.bind(builder.vaultDirectory);
         AltStore.configure(builder.storeFileName, builder.storeKeyBinding);
@@ -159,6 +164,7 @@ public final class AltsRuntime<H> {
         private final Map<String, GameStatsSource> gameStatsSources = new LinkedHashMap<>();
         private MicrosoftAuthConfig microsoftAuth;
         private VaultTransportResolver vaultTransportResolver;
+        private ProxyProvider proxyProvider;
         private String storeFileName;
         private String storeKeyBinding;
         private String secretsFileName;
@@ -264,6 +270,23 @@ public final class AltsRuntime<H> {
          */
         public Builder<H> vaultTransportResolver(VaultTransportResolver value) {
             this.vaultTransportResolver = value;
+            return this;
+        }
+
+        /**
+         * Sets the proxy provider (optional; without one every request connects directly, as in every
+         * release before this seam existed). The library asks it per request, so any rotation policy —
+         * per-account pinning, round-robin, a health-checked pool — lives behind the host's
+         * implementation.
+         *
+         * <p>Note that resolution fails closed once a provider is installed: see {@link ProxyProvider}.
+         *
+         * @param value the host proxy provider
+         * @return this builder
+         * @since 0.8.0
+         */
+        public Builder<H> proxyProvider(ProxyProvider value) {
+            this.proxyProvider = value;
             return this;
         }
 
