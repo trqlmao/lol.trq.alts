@@ -1,6 +1,6 @@
 # Alt-management surface
 
-Status: §A, §B, §D shipped in 0.8.0; §C, §E, §F proposed
+Status: §A, §B, §D shipped in 0.8.0; §E shipped in 0.9.0; §C shipped in 0.10.0; §F proposed
 Date: 2026-08-05
 Releases: 0.8.0 (breaking), 0.9.0 (breaking), 0.10.0
 

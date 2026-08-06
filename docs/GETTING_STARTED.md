@@ -34,6 +34,7 @@ The library never touches your mod's types. You implement a small set of backend
 | `ToastSink` | Surface a login notification in your UI. |
 | `GameStatsSource` | *(optional)* Fetch one server's stats as display chips; you hold any API key. Register one per server. |
 | `ProxyProvider` | *(optional)* Name the route each request takes. Without one, everything connects directly. |
+| `AvatarSource` | *(optional)* Produce a face PNG for a UUID. Defaults to cropping the skin from Mojang directly. |
 
 ## 3. Build the runtime
 
@@ -489,6 +490,28 @@ if (stats != null) {
 For tests and demos, the shipped `StaticGameStatsSource` returns fixed chips with no API call. The
 source above is compiled as [`ExampleNetGameStatsSource`](../examples/ExampleNetGameStatsSource.java)
 and the read-back as `GettingStartedExample.readGameStats`; see [../examples/](../examples/).
+
+## Avatars
+
+`alts.skinCache().get(uuid)` returns a host texture handle for a player's face, or `null` while a
+background fetch runs. **Key it on the UUID, not the username** — a rename leaves a username-keyed entry
+pointing at a name that no longer resolves, so the head breaks for good; the UUID is the identity.
+
+By default the library resolves the skin from Mojang's own session server and crops the 8×8 face (hat
+composited) locally. That is a deliberate choice: a third-party head-render URL would hand that service
+the identity of every account on every cache miss — for an alt manager, the whole list one person
+controls, arriving from one address — and you are already talking to Mojang for auth, so sourcing the
+face there adds no new party.
+
+If you want a head-render service back, for its 3D renders or its CDN, opt in:
+
+```java
+.avatarSource(new UrlTemplateAvatarSource("https://example.net/avatar/{uuid}/{size}.png"))
+```
+
+That discloses each UUID to the service you name — a trade you are now making on purpose rather than by
+default. A failed fetch is retried after a growing backoff rather than cached as broken forever, so a
+momentary network blip does not cost the head for the rest of the session.
 
 ## Persistence and encryption
 

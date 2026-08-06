@@ -89,8 +89,9 @@ public final class GettingStartedExample {
         List<AltAccount> saved = AltStore.accounts();
 
         for (AltAccount account : saved) {
-            // Lazy, cached avatar. Keyed by USERNAME, not UUID; null until the background fetch lands.
-            MyHandle head = alts.skinCache().get(account.username());
+            // Lazy, cached avatar. Keyed by UUID, so a renamed account keeps its head; null until the
+            // background fetch lands.
+            MyHandle head = alts.skinCache().get(account.uuid());
 
             // Lazy, cached per-server game stats (null if no source for that server, or fetch pending).
             GameStats stats = alts.gameStats("example.net").get(account.uuid());

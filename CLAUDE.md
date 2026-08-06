@@ -42,7 +42,7 @@ Package map:
 | `auth/` | the login routes, account check/refresh, `MicrosoftAuthConfig`, token expiry, cookies |
 | `store/` | `AltStore` (accounts) and `SecretStore` (per-user secrets), both encrypted files |
 | `cache/` | `AsyncCache<K,V>` — lazy, non-blocking, stale-while-revalidate |
-| `skin/` | `SkinAvatarCache<H>` over that cache |
+| `skin/` | `SkinAvatarCache<H>` (UUID-keyed) + `MojangAvatarSource` / `UrlTemplateAvatarSource` |
 | `model/` | the records: `AltAccount`, `SessionData`, `GameStats`, `BanInfo`, enums |
 | `crypto/`, `vault/` | the zero-knowledge shared repository; `vault/federation/` is `avp://` addressing |
 
@@ -102,6 +102,12 @@ do. Pass a `NetworkScope` naming the purpose and, when there is one, the account
 request; it must never fall back to a direct connection. That fallback would disclose the host's real
 address at the moment it believed every request was routed, and unlike a failed request it cannot be
 undone.
+
+**Avatars key on UUID and default to Mojang.** `skinCache().get(uuid)`, never the username — a rename
+breaks a name-keyed head for good. The default `AvatarSource` crops the face from Mojang directly rather
+than a head-render service, because that service would otherwise see every account's identity on each
+miss; `UrlTemplateAvatarSource` is the opt-in back. A failed fetch retries on a backoff, never caches as
+permanently broken.
 
 **An unreadable store is not an empty store.** The encryption key is derived from machine properties, so
 a renamed OS user or a moved home directory turns a good file unreadable. `AltStore`/`SecretStore` never
