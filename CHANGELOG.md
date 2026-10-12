@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Cookie login works again. The sign-in chain it follows grew a step: the Xbox Live sign-in endpoint
+  now hands off to the Microsoft identity platform before `login.live.com`, so the chain is four
+  redirects long rather than three. The library stopped one short and read the token out of a URL that
+  carried only the code it is traded for, and every cookie login failed with
+  `Invalid redirect: No accessToken`. The chain is now followed to its end, and the cookies are sent
+  only to the two Microsoft sign-in hosts.
+- The token on that last redirect is percent-decoded and parsed as JSON rather than cut apart as text,
+  so an encoded padding character or a reordered field no longer fails a login.
+
 ## [0.11.0] - 2026-08-06
 
 The full post-login account surface — everything an account owner can do to their own account through

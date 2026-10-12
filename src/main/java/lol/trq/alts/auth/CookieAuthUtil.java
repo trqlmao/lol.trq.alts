@@ -1,12 +1,14 @@
 package lol.trq.alts.auth;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.regex.Pattern;
 import lol.trq.alts.net.HttpUtil;
 import lol.trq.alts.net.NetworkScope;
 
@@ -47,8 +49,24 @@ public final class CookieAuthUtil {
 
     private CookieAuthUtil() {}
 
+    /** Where the sign-in starts: the Xbox Live SISU endpoint, asked to land on the Minecraft login page. */
+    private static final String SISU_START =
+            "https://sisu.xboxlive.com/connect/XboxLive/?state=login&cobrandId=8058f65d-ce06-4c30-9559-473c9275a65d&tid=896928775&ru=https://www.minecraft.net/en-us/login&aid=1142970254&as=0";
+
+    /** The query or fragment parameter the last redirect carries the token bundle in. */
+    private static final String ACCESS_TOKEN_PARAM = "accessToken=";
+
+    /** The relying party whose XSTS token Minecraft services accept. */
+    private static final String MINECRAFT_RELYING_PARTY = "rp://api.minecraftservices.com/";
+
     /**
      * Executes the full cookie-based authentication flow.
+     *
+     * <p>The chain is four redirects long. SISU hands off to the Microsoft identity platform, which
+     * hands off to {@code login.live.com}; that is where the session cookies sign the user in, and it
+     * answers with a code for SISU, which SISU then turns into the redirect that carries the token.
+     * The cookies go only to the two Microsoft sign-in hosts: SISU needs none on the way in, and gets
+     * none on the way out.
      *
      * @param cookieData the raw string containing cookie information
      * @return a {@link MinecraftProfile} containing the authenticated session data
@@ -57,16 +75,12 @@ public final class CookieAuthUtil {
     public static MinecraftProfile authenticate(String cookieData) throws Exception {
         String cookieHeader = parseCookies(cookieData);
 
-        // Follow the SISU (Single Sign-On) redirect chain
-        String location1 = followRedirect(
-                "https://sisu.xboxlive.com/connect/XboxLive/?state=login&cobrandId=8058f65d-ce06-4c30-9559-473c9275a65d&tid=896928775&ru=https://www.minecraft.net/en-us/login&aid=1142970254",
-                "PHPSESSID=0");
+        String identityPlatform = followRedirect(SISU_START, null);
+        String liveLogin = followRedirect(identityPlatform, cookieHeader);
+        String sisuCallback = followRedirect(liveLogin, cookieHeader);
+        String landing = followRedirect(sisuCallback, null);
 
-        String location2 = followRedirect(location1.replace(" ", "%20"), cookieHeader);
-        String location3 = followRedirect(location2, cookieHeader);
-
-        // Exchange the final redirect URL for an XSTS token
-        XstsTokenData xstsData = extractXstsFromRedirect(location3);
+        XstsTokenData xstsData = extractXstsFromRedirect(landing);
         String mcToken = authenticateWithMinecraft(xstsData);
 
         return getMinecraftProfile(mcToken);
@@ -259,20 +273,20 @@ public final class CookieAuthUtil {
      * @throws Exception if the server does not return a redirect or an error occurs
      */
     private static String followRedirect(String urlString, String cookies) throws Exception {
-        Map<String, String> headers = Map.of(
-                "Accept",
-                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Encoding",
-                "*",
-                "Accept-Language",
-                "en-US;q=0.8,en;q=0.7",
-                "User-Agent",
-                USER_AGENT,
-                "Cookie",
-                cookies);
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8");
+        headers.put("Accept-Encoding", "*");
+        headers.put("Accept-Language", "en-US;q=0.8,en;q=0.7");
+        // Only the Location header is wanted; the sign-in pages behind these URLs are large.
+        headers.put("Range", "bytes=0-0");
+        headers.put("User-Agent", USER_AGENT);
+        if (cookies != null && !cookies.isEmpty()) {
+            headers.put("Cookie", cookies);
+        }
 
-        HttpUtil.HeaderResponse response =
-                HttpUtil.getHeader(urlString, headers, "Location", NetworkScope.of(NetworkScope.Purpose.AUTH));
+        // The services put raw spaces in the URLs they redirect to, which no URI parser accepts.
+        HttpUtil.HeaderResponse response = HttpUtil.getHeader(
+                urlString.replace(" ", "%20"), headers, "Location", NetworkScope.of(NetworkScope.Purpose.AUTH));
 
         if (response.value() == null) {
             if (response.status() >= 400) throw new Exception("HTTP " + response.status() + " during redirect");
@@ -284,23 +298,94 @@ public final class CookieAuthUtil {
     /**
      * Extracts XSTS authentication data from the final redirect URI.
      *
+     * <p>The token bundle is a Base64 JSON array of relying-party and token pairs, percent-encoded into
+     * the URL. It is decoded and parsed rather than cut apart as text, so neither the encoding of its
+     * padding nor the order of its fields decides whether a login works.
+     *
+     * <p>Package-private so the decoding can be tested without a network round.
+     *
      * @param redirectUrl the URL containing the encoded access token
      * @return a record containing the XSTS token and user hash
      * @throws Exception if the token is missing or incorrectly encoded
      */
-    private static XstsTokenData extractXstsFromRedirect(String redirectUrl) throws Exception {
-        if (!redirectUrl.contains("accessToken=")) throw new Exception("Invalid redirect: No accessToken");
-        String accessToken = redirectUrl.split("accessToken=")[1];
-        if (accessToken.contains("&")) accessToken = accessToken.split("&")[0];
+    static XstsTokenData extractXstsFromRedirect(String redirectUrl) throws Exception {
+        if (redirectUrl == null || !redirectUrl.contains(ACCESS_TOKEN_PARAM)) {
+            throw new Exception("Invalid redirect: No accessToken");
+        }
 
-        String decoded = new String(Base64.getDecoder().decode(accessToken), StandardCharsets.UTF_8);
-        String tokenPart = decoded.split("\"rp://api.minecraftservices.com/\",")[1];
-        String token = tokenPart.split("\"Token\":\"")[1].split("\"")[0];
-        String uhs = tokenPart
-                .split(Pattern.quote("{\"DisplayClaims\":{\"xui\":[{\"uhs\":\""))[1]
-                .split("\"")[0];
+        String raw = redirectUrl.substring(redirectUrl.indexOf(ACCESS_TOKEN_PARAM) + ACCESS_TOKEN_PARAM.length());
+        int end = indexOfAny(raw, '&', '#');
+        if (end != -1) raw = raw.substring(0, end);
 
-        return new XstsTokenData(token, uhs);
+        JsonArray bundle;
+        try {
+            // Not URLDecoder: that is for form bodies and would turn a Base64 '+' into a space.
+            String encoded = percentDecode(raw);
+            byte[] bytes;
+            try {
+                bytes = Base64.getDecoder().decode(encoded);
+            } catch (IllegalArgumentException notStandard) {
+                bytes = Base64.getUrlDecoder().decode(encoded);
+            }
+            bundle = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8))
+                    .getAsJsonArray();
+        } catch (RuntimeException malformed) {
+            throw new Exception("Invalid redirect: accessToken could not be decoded");
+        }
+
+        try {
+            for (JsonElement element : bundle) {
+                JsonObject entry = element.getAsJsonObject();
+                if (!MINECRAFT_RELYING_PARTY.equals(entry.get("Item1").getAsString())) continue;
+
+                JsonObject item = entry.getAsJsonObject("Item2");
+                String token = item.get("Token").getAsString();
+                String uhs = item.getAsJsonObject("DisplayClaims")
+                        .getAsJsonArray("xui")
+                        .get(0)
+                        .getAsJsonObject()
+                        .get("uhs")
+                        .getAsString();
+                return new XstsTokenData(token, uhs);
+            }
+        } catch (RuntimeException malformed) {
+            throw new Exception("Invalid redirect: accessToken is not a token bundle");
+        }
+
+        throw new Exception("Invalid redirect: No Minecraft token in accessToken");
+    }
+
+    /** {@return the first index of either character in {@code text}, or -1 if it holds neither} */
+    private static int indexOfAny(String text, char first, char second) {
+        int a = text.indexOf(first);
+        int b = text.indexOf(second);
+        if (a == -1) return b;
+        if (b == -1) return a;
+        return Math.min(a, b);
+    }
+
+    /**
+     * Decodes {@code %XX} escapes and nothing else.
+     *
+     * @param text the percent-encoded text
+     * @return the decoded text
+     * @throws IllegalArgumentException if an escape is truncated or not hexadecimal
+     */
+    private static String percentDecode(String text) {
+        if (text.indexOf('%') == -1) return text;
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c != '%') {
+                out.write(c);
+                continue;
+            }
+            if (i + 2 >= text.length()) throw new IllegalArgumentException("truncated escape");
+            out.write(Integer.parseInt(text.substring(i + 1, i + 3), 16));
+            i += 2;
+        }
+        return out.toString(StandardCharsets.UTF_8);
     }
 
     /**
@@ -351,5 +436,5 @@ public final class CookieAuthUtil {
     }
 
     /** Internal data structure for XSTS token information. */
-    private record XstsTokenData(String token, String uhs) {}
+    record XstsTokenData(String token, String uhs) {}
 }
