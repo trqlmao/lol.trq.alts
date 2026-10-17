@@ -26,7 +26,8 @@ import lol.trq.alts.spi.TextureUploader;
  *
  * <ul>
  *   <li>absent from map &rarr; not requested yet
- *   <li>{@link #PENDING} &rarr; fetch in flight
+ *   <li>a {@link Pending} &rarr; fetch in flight; one instance per fetch, so a fetch overtaken by
+ *       {@link #invalidate} cannot write its stale result back
  *   <li>a {@link Failed} &rarr; a fetch failed; retried after a growing backoff, not forever abandoned
  *   <li>a host handle &rarr; ready to draw
  * </ul>
@@ -38,9 +39,6 @@ import lol.trq.alts.spi.TextureUploader;
 public final class SkinAvatarCache<H> {
 
     private static final int FACE_PX = 64;
-
-    /** Sentinel marking an in-flight fetch. */
-    private static final Object PENDING = new Object();
 
     /** First retry waits this long after a failure; each further failure doubles it, up to the cap. */
     private static final long RETRY_BASE_MILLIS = 5_000L;
@@ -97,28 +95,50 @@ public final class SkinAvatarCache<H> {
         Object existing = cache.get(key);
 
         if (existing == null) {
-            if (cache.putIfAbsent(key, PENDING) == null) {
-                fetchAsync(key);
+            Pending pending = new Pending();
+            if (cache.putIfAbsent(key, pending) == null) {
+                fetchAsync(key, pending);
             }
             return null;
         }
-        if (existing == PENDING) {
+        if (existing instanceof Pending) {
             return null;
         }
         if (existing instanceof Failed failed) {
             // A failure is temporary. Once its backoff elapses, the next request re-arms the fetch,
             // rather than the head staying broken for the life of the process.
-            if (clock.getAsLong() >= failed.retryAt() && cache.replace(key, failed, PENDING)) {
-                fetchAsync(key);
+            Pending pending = new Pending(failed.failures());
+            if (clock.getAsLong() >= failed.retryAt() && cache.replace(key, failed, pending)) {
+                fetchAsync(key, pending);
             }
             return null;
         }
         return (H) existing;
     }
 
-    private void fetchAsync(String key) {
+    /**
+     * Drops the cached avatar for {@code uuid}, so the next {@link #get} fetches it again. For a skin the
+     * host knows has changed: without this the old head is served for the life of the process.
+     *
+     * <p>A fetch already in flight for this UUID is abandoned; its result is discarded rather than
+     * stored, since it may predate the change.
+     *
+     * @param uuid the player UUID whose avatar to drop; null or blank is a no-op
+     * @return the handle that was cached, for the host to release, or null if none was ready
+     * @since 0.12.0
+     */
+    @SuppressWarnings("unchecked")
+    public H invalidate(String uuid) {
+        if (uuid == null || uuid.isBlank()) {
+            return null;
+        }
+        Object removed = cache.remove(uuid.toLowerCase(java.util.Locale.ROOT));
+        return removed == null || removed instanceof Pending || removed instanceof Failed ? null : (H) removed;
+    }
+
+    private void fetchAsync(String key, Pending pending) {
         CompletableFuture.supplyAsync(() -> downloadBytes(key))
-                .thenAccept(bytes -> mainThread.execute(() -> upload(key, bytes)));
+                .thenAccept(bytes -> mainThread.execute(() -> upload(key, pending, bytes)));
     }
 
     private byte[] downloadBytes(String key) {
@@ -129,20 +149,24 @@ public final class SkinAvatarCache<H> {
         }
     }
 
-    private void upload(String key, byte[] bytes) {
+    private void upload(String key, Pending pending, byte[] bytes) {
+        // Invalidated (or superseded) while in flight: the result may be the old skin, so drop it.
+        if (cache.get(key) != pending) {
+            return;
+        }
         if (bytes == null) {
-            markFailed(key);
+            markFailed(key, pending);
             return;
         }
         try {
             H handle = uploader.upload(new ByteArrayInputStream(bytes));
             if (handle != null) {
-                cache.put(key, handle);
+                cache.replace(key, pending, handle);
             } else {
-                markFailed(key);
+                markFailed(key, pending);
             }
         } catch (Exception ignored) {
-            markFailed(key);
+            markFailed(key, pending);
         }
     }
 
@@ -151,13 +175,28 @@ public final class SkinAvatarCache<H> {
      * a persistently missing avatar is retried ever less often rather than hammered or given up on.
      *
      * @param key the cache key that failed
+     * @param pending the fetch that failed; nothing is recorded if it is no longer the current one
      */
-    private void markFailed(String key) {
-        Object current = cache.get(key);
-        int priorFailures = current instanceof Failed failed ? failed.failures() : 0;
-        int failures = priorFailures + 1;
+    private void markFailed(String key, Pending pending) {
+        int priorFailures = pending.priorFailures;
         long delay = Math.min(RETRY_BASE_MILLIS << Math.min(priorFailures, 6), RETRY_MAX_MILLIS);
-        cache.put(key, new Failed(failures, clock.getAsLong() + delay));
+        cache.replace(key, pending, new Failed(priorFailures + 1, clock.getAsLong() + delay));
+    }
+
+    /**
+     * An in-flight fetch. Identity matters: a fetch may only write its outcome over its own marker.
+     * Carries the failure count of the entry it replaced so the backoff keeps growing across retries.
+     */
+    private static final class Pending {
+        final int priorFailures;
+
+        Pending() {
+            this(0);
+        }
+
+        Pending(int priorFailures) {
+            this.priorFailures = priorFailures;
+        }
     }
 
     /**

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `SkinAvatarCache.invalidate(uuid)` drops a cached head so the next `get` fetches it again, for a host
+  that knows a skin changed. It returns the dropped handle so the host can free the texture. A fetch
+  still in flight when the entry is invalidated is discarded instead of writing the old head back.
+
+### Fixed
+
+- The avatar retry backoff now grows. A retry replaced the failure record before fetching, so a second
+  failure always counted as the first and every retry waited the base 5 seconds.
+
 ## [0.11.1] - 2026-10-11
 
 ### Fixed
